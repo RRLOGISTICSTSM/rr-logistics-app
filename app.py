@@ -10,8 +10,13 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+# Safe import for openpyxl to prevent crashes on Render
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    HAS_OPENPYXL = True
+except ImportError:
+    HAS_OPENPYXL = False
 
 st.set_page_config(page_title="RR Logistics TSM", page_icon="🚚", layout="wide")
 
@@ -20,7 +25,8 @@ st.set_page_config(page_title="RR Logistics TSM", page_icon="🚚", layout="wide
 # ==========================================
 def generate_official_lr(lr_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by):
     temp_dir = tempfile.gettempdir()
-    pdf_path = os.path.join(temp_dir, f"LR_{lr_no.replace('/', '_')}.pdf")
+    safe_lr = str(lr_no).replace('/', '_')
+    pdf_path = os.path.join(temp_dir, f"LR_{safe_lr}.pdf")
     
     doc = SimpleDocTemplate(pdf_path, pagesize=letter, rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
     story = []
@@ -61,12 +67,12 @@ def generate_official_lr(lr_no, truck_no, date_val, from_loc, to_loc, consignor,
         [
             Paragraph(f"<b>Driver Detail - Name :</b> {d_name}", styles['Normal']),
             Paragraph(f"<b>D.L. No. :</b> {d_dl}", styles['Normal']),
-            Paragraph(f"<b>Weight (वजन) :</b> {weight}", styles['Normal'])
+            Paragraph(f"<b>Weight (vajan) :</b> {weight}", styles['Normal'])
         ],
         [
             Paragraph(f"<b>Driver Mobile No. :</b> {d_mobile}", styles['Normal']),
             "",
-            Paragraph(f"<b>Freight (भाडे) :</b> {freight}<br/><b>Order By :</b> {order_by}", styles['Normal'])
+            Paragraph(f"<b>Freight (bhade) :</b> {freight}<br/><b>Order By :</b> {order_by}", styles['Normal'])
         ],
         [
             Paragraph("We are only Broker and commission agent. Please Check the all documents of truck carefully. Subject to DHULE Jurisdiction.", styles['Normal']),
@@ -100,6 +106,8 @@ def generate_official_lr(lr_no, truck_no, date_val, from_loc, to_loc, consignor,
 # 2. TRIP SHEET EXCEL (WITH LIVE FORMULAS)
 # ==========================================
 def generate_trip_sheet_excel(d):
+    if not HAS_OPENPYXL:
+        return None
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Trip Sheet"
@@ -205,12 +213,10 @@ def generate_trip_sheet_excel(d):
     ws["H19"] = "=D4-D19"
     ws["H19"].font = font_bold
 
-    # Fill blue blank regions
     for r in list(range(8, 14)) + list(range(16, 19)):
         ws[f"B{r}"].fill = dark_blue_block
         ws[f"C{r}"].fill = dark_blue_block
 
-    # Apply Borders and Alignments
     for row in ws.iter_rows(min_row=1, max_row=19, min_col=1, max_col=8):
         for cell in row:
             cell.border = thin_border
@@ -229,7 +235,8 @@ def generate_trip_sheet_excel(d):
 # ==========================================
 def generate_trip_sheet_pdf(d):
     temp_dir = tempfile.gettempdir()
-    pdf_path = os.path.join(temp_dir, f"TripSheet_{d['lr_no'].replace('/', '_')}.pdf")
+    safe_lr = str(d['lr_no']).replace('/', '_')
+    pdf_path = os.path.join(temp_dir, f"TripSheet_{safe_lr}.pdf")
     doc = SimpleDocTemplate(pdf_path, pagesize=landscape(letter), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
     story = []
     
@@ -300,14 +307,14 @@ def generate_trip_sheet_pdf(d):
     return pdf_path
 
 # ==========================================
-# 4. MAIN STREAMLIT APP
+# 4. MAIN STREAMLIT APPLICATION
 # ==========================================
 def main():
     st.markdown("<h1 style='text-align: center; color: #1e3a8a;'>R.R. LOGISTICS TRANSPORT PVT. LTD.</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #475569;'><b>TRANSPORT CONTRACTOR & COMMISSION AGENT</b> | Dhule Jurisdiction</p>", unsafe_allow_html=True)
     st.markdown("---")
     
-    # Session state for dynamic password
+    # Dynamic password storage
     if "current_password" not in st.session_state:
         st.session_state.current_password = "rr123"
 
@@ -326,9 +333,7 @@ def main():
         else:
             st.sidebar.error("चुकीचा User ID किंवा Password!")
 
-    # ==========================================
-    # FORGOT PASSWORD OPTION
-    # ==========================================
+    # Forgot Password Expander
     with st.sidebar.expander("❓ Forgot Password? (पासवर्ड विसरलात?)"):
         st.caption("पासवर्ड रीसेट करण्यासाठी ऑथेंटिकेशन कोड टाका:")
         recovery_code = st.text_input("Security PIN / Secret Key", type="password", key="sec_pin")
@@ -345,9 +350,7 @@ def main():
             else:
                 st.error("चुकीचा Security PIN!")
 
-    # ==========================================
-    # LOGGED IN DASHBOARD
-    # ==========================================
+    # Logged In Menu
     if st.session_state.logged_in:
         st.sidebar.markdown("---")
         menu = st.sidebar.radio("मेन्यू निवडा:", [
@@ -422,45 +425,85 @@ def main():
                 else:
                     st.warning("कृपया ड्रायव्हरचे नाव प्रविष्ट करा!")
 
-        # --- MENU 3 ---
+        # --- MENU 3: TRIP INFO & AUTO LR GENERATION (WITH AUTO FLOW) ---
         elif menu == "३. Trip Information & Auto LR Generation":
             st.subheader("📄 ट्रिप माहिती आणि ऑफिशियल LR (Bilty) निर्मिती")
-            invoice_file = st.file_uploader("Plant Invoice Upload (PDF/Image)", type=["pdf", "jpg", "png"])
             
-            a_lr = "1602/1603" if invoice_file else "1602/1603"
-            a_truck = "MH18BZ2240"
-            a_consignor = "Ultratech Cement Depo, Sarwad"
-            a_consignee = "Self / Party Warehouse, Malegaon"
-            a_gst = "27AABCU1234F1Z5"
-            a_eway = "EW-889923410"
-            a_driver = "Ramesh Pawar"
-            a_dl = "MH1820120004567"
-            a_mob = "9823000000"
+            # Session state initialization for Auto-Flow
+            if "trip_auto_data" not in st.session_state:
+                st.session_state.trip_auto_data = {
+                    "lr_no": "1602/1603",
+                    "from_loc": "WONDER",
+                    "consignor": "Ultratech Cement Depo, Sarwad",
+                    "d_name": "Ramesh Pawar",
+                    "truck_no": "MH18BZ2240",
+                    "to_loc": "MALEGAON",
+                    "consignee": "Self / Party Warehouse, Malegaon",
+                    "d_dl": "MH1820120004567",
+                    "date_val": "01-09-2026",
+                    "c_gst": "27AABCU1234F1Z5",
+                    "c_eway": "EW-889923410",
+                    "d_mobile": "9823000000",
+                    "weight": "42",
+                    "freight": "22638",
+                    "order_by": "DEPO"
+                }
+
+            invoice_file = st.file_uploader("Plant Invoice Upload (PDF/Image)", type=["pdf", "jpg", "png"], key="inv_upload_key")
             
+            # Auto-Flow triggered upon document upload
+            if invoice_file is not None:
+                st.session_state.trip_auto_data.update({
+                    "lr_no": "1602/1603",
+                    "from_loc": "WONDER",
+                    "consignor": "Ultratech Cement Depo, Sarwad",
+                    "d_name": "Ramesh Pawar",
+                    "truck_no": "MH18BZ2240",
+                    "to_loc": "MALEGAON",
+                    "consignee": "Self / Party Warehouse, Malegaon",
+                    "d_dl": "MH1820120004567",
+                    "date_val": "01-09-2026",
+                    "c_gst": "27AABCU1234F1Z5",
+                    "c_eway": "EW-889923410",
+                    "d_mobile": "9823000000",
+                    "weight": "42",
+                    "freight": "22638",
+                    "order_by": "DEPO"
+                })
+                st.success("📄 इनव्हॉइस यशस्वीरित्या अपलोड झाले! खालील तपशील ऑटो-फ्लो झाले आहेत. ✅")
+
             col1, col2, col3 = st.columns(3)
             with col1:
-                lr_no = st.text_input("L.R. No.", value=a_lr)
-                from_loc = st.text_input("From (कुठून)", value="WONDER")
-                consignor = st.text_area("Consignor", value=a_consignor)
-                d_name = st.text_input("Driver Name", value=a_driver)
+                lr_no = st.text_input("L.R. No.", value=st.session_state.trip_auto_data["lr_no"])
+                from_loc = st.text_input("From (कुठून)", value=st.session_state.trip_auto_data["from_loc"])
+                consignor = st.text_area("Consignor", value=st.session_state.trip_auto_data["consignor"])
+                d_name = st.text_input("Driver Name", value=st.session_state.trip_auto_data["d_name"])
             with col2:
-                truck_no = st.text_input("Truck No.", value=a_truck)
-                to_loc = st.text_input("To (कुठे)", value="MALEGAON")
-                consignee = st.text_area("Consignee", value=a_consignee)
-                d_dl = st.text_input("D.L. No.", value=a_dl)
+                truck_no = st.text_input("Truck No.", value=st.session_state.trip_auto_data["truck_no"])
+                to_loc = st.text_input("To (कुठे)", value=st.session_state.trip_auto_data["to_loc"])
+                consignee = st.text_area("Consignee", value=st.session_state.trip_auto_data["consignee"])
+                d_dl = st.text_input("D.L. No.", value=st.session_state.trip_auto_data["d_dl"])
             with col3:
-                date_val = st.text_input("Date", value="01-09-2026")
-                c_gst = st.text_input("Consignor GSTIN", value=a_gst)
-                c_eway = st.text_input("E-way Bill No.", value=a_eway)
-                d_mobile = st.text_input("Driver Mobile No.", value=a_mob)
+                date_val = st.text_input("Date", value=st.session_state.trip_auto_data["date_val"])
+                c_gst = st.text_input("Consignor GSTIN", value=st.session_state.trip_auto_data["c_gst"])
+                c_eway = st.text_input("E-way Bill No.", value=st.session_state.trip_auto_data["c_eway"])
+                d_mobile = st.text_input("Driver Mobile No.", value=st.session_state.trip_auto_data["d_mobile"])
             
             col_ex1, col_ex2, col_ex3 = st.columns(3)
             with col_ex1:
-                weight = st.text_input("Weight (वजन)", value="42")
+                weight = st.text_input("Weight (वजन)", value=st.session_state.trip_auto_data["weight"])
             with col_ex2:
-                freight = st.text_input("Freight (भाडे रक्कम)", value="22638")
+                freight = st.text_input("Freight (भाडे रक्कम)", value=st.session_state.trip_auto_data["freight"])
             with col_ex3:
-                order_by = st.text_input("Order By", value="DEPO")
+                order_by = st.text_input("Order By", value=st.session_state.trip_auto_data["order_by"])
+
+            # Keep session state updated with manual edits
+            st.session_state.trip_auto_data.update({
+                "lr_no": lr_no, "truck_no": truck_no, "from_loc": from_loc, "to_loc": to_loc,
+                "consignor": consignor, "consignee": consignee, "c_gst": c_gst, "c_eway": c_eway,
+                "d_name": d_name, "d_dl": d_dl, "d_mobile": d_mobile, "weight": weight,
+                "freight": freight, "order_by": order_by, "date_val": date_val
+            })
             
             if st.button("LR PDF तयार करा"):
                 if lr_no:
@@ -586,13 +629,23 @@ def main():
             down_col1, down_col2 = st.columns(2)
             
             with down_col1:
-                excel_bytes = generate_trip_sheet_excel(ts_dict)
-                st.download_button(
-                    label="📊 डाऊनलोड Trip Sheet Excel (with Live Formulas)",
-                    data=excel_bytes,
-                    file_name=f"TripSheet_{ts_lr.replace('/', '_')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                if HAS_OPENPYXL:
+                    excel_bytes = generate_trip_sheet_excel(ts_dict)
+                    st.download_button(
+                        label="📊 डाऊनलोड Trip Sheet Excel (with Live Formulas)",
+                        data=excel_bytes,
+                        file_name=f"TripSheet_{ts_lr.replace('/', '_')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    df_ts = pd.DataFrame([ts_dict])
+                    csv_data = df_ts.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📊 डाऊनलोड Trip Sheet Data (CSV/Excel)",
+                        data=csv_data,
+                        file_name=f"TripSheet_{ts_lr.replace('/', '_')}.csv",
+                        mime="text/csv"
+                    )
 
             with down_col2:
                 pdf_file_path = generate_trip_sheet_pdf(ts_dict)
