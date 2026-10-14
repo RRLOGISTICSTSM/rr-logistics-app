@@ -39,7 +39,7 @@ def init_db():
     c.execute("INSERT OR IGNORE INTO app_settings VALUES ('admin_password', 'rr123')")
     c.execute("INSERT OR IGNORE INTO app_settings VALUES ('security_pin', '9822')")
 
-    # वाहनांचे टेबल (जुना डेटा कायम राहील)
+    # वाहनांचे टेबल (जुना डेटा सुरक्षित राहील)
     c.execute('''CREATE TABLE IF NOT EXISTS vehicles (
                     veh_no TEXT PRIMARY KEY,
                     owner_name TEXT,
@@ -58,7 +58,7 @@ def init_db():
                     created_at TEXT
                 )''')
 
-    # ड्रायव्हर्स टेबल (जुना डेटा कायम राहील)
+    # ड्रायव्हर्स टेबल (जुना डेटा सुरक्षित राहील)
     c.execute('''CREATE TABLE IF NOT EXISTS drivers (
                     dl_no TEXT PRIMARY KEY,
                     driver_name TEXT,
@@ -110,7 +110,7 @@ def init_db():
                     created_at TEXT
                 )''')
 
-    # जुना डेटा सुरक्षित ठेवून नवीन कॉलम्स जोडणे (Safe Schema Upgrade)
+    # जुना डेटा सुरक्षित ठेवून नवीन कॉलम्स तपासणे व जोडणे
     c.execute("PRAGMA table_info(trip_sheets)")
     existing_cols = [col[1] for col in c.fetchall()]
     if "di_no" not in existing_cols:
@@ -194,9 +194,9 @@ def save_uploaded_file(uploaded_file, prefix, existing_path=""):
     return file_path
 
 # ==========================================
-# 1. LR PDF GENERATION FUNCTION (WITH DI & BOLT/SEAL NO.)
+# 1. LR PDF GENERATION (DI NEXT TO LR, NO GST)
 # ==========================================
-def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade):
+def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade):
     temp_dir = tempfile.gettempdir()
     safe_lr = str(lr_no).replace('/', '_')
     pdf_path = os.path.join(temp_dir, f"LR_{safe_lr}.pdf")
@@ -209,7 +209,7 @@ def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to
     sub_style = ParagraphStyle('SubStyle', parent=styles['Normal'], fontSize=8.5, textColor=colors.HexColor('#1e3a8a'), alignment=1, spaceAfter=2)
     addr_style = ParagraphStyle('AddrStyle', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#334155'), alignment=1, spaceAfter=8)
     
-    # R.R. Logistics लोगो लोड करणे
+    # R.R. Logistics लोगो तपासणी
     for l_file in ["logo.jpeg", "logo.jpg", "logo.png"]:
         if os.path.exists(l_file):
             img = RLImage(l_file, width=80, height=55)
@@ -223,10 +223,11 @@ def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to
     story.append(Paragraph("TRANSPORT CONTRACTOR & COMMISSION AGENT", sub_style))
     story.append(Paragraph("Gat No. 298-2A, R.R. Petroleum, Mumbai-Agra Highway, Sarwad, Dhule.<br/><b>Mob: 9822414040 / 9049521177</b>", addr_style))
     
+    # पहिल्या ओळीत L.R. No. च्या अगदी बाजूला D.I. No.
     data = [
         [
             Paragraph(f"<b>L.R. No. :</b> {lr_no}", styles['Normal']),
-            Paragraph(f"<b>DI No. :</b> {di_no}<br/><b>Bolt / Seal No. :</b> {bolt_no}", styles['Normal']),
+            Paragraph(f"<b>D.I. No. :</b> {di_no}", styles['Normal']),
             Paragraph(f"<b>Date :</b> {date_val}<br/><b>Truck No. :</b> {truck_no}", styles['Normal'])
         ],
         [
@@ -235,9 +236,9 @@ def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to
             Paragraph(f"<b>To :</b> {to_loc}", styles['Normal'])
         ],
         [
-            Paragraph(f"<b>Consignor:</b><br/>{consignor}<br/><br/><b>GSTIN No. :</b> {c_gst}<br/><b>E-way Bill No. :</b> {c_eway}", styles['Normal']),
+            Paragraph(f"<b>Consignor:</b><br/>{consignor}<br/><br/><b>E-way Bill No. :</b> {c_eway}", styles['Normal']),
             "",
-            Paragraph(f"<b>Consignee:</b><br/>{consignee}<br/><br/><b>Material / Grade:</b> {mat_grade}", styles['Normal'])
+            Paragraph(f"<b>Consignee:</b><br/>{consignee}<br/><br/><b>Material / Grade:</b> {mat_grade}<br/><b>Bolt / Seal No. :</b> {bolt_no}", styles['Normal'])
         ],
         [
             Paragraph(f"<b>Driver Name :</b> {d_name}", styles['Normal']),
@@ -502,517 +503,4 @@ def generate_doc_expiry_pdf(vehicle_rows):
                 try:
                     exp_date = datetime.strptime(exp_val, "%Y-%m-%d").date()
                     if exp_date < today:
-                        alerts.append(f"{name} Expired")
-                    elif (exp_date - today).days <= 15:
-                        alerts.append(f"{name} Due Soon")
-                except:
-                    pass
-        status_text = ", ".join(alerts) if alerts else "सर्व वैध (Valid)"
-        table_data.append([veh_no, owner, ins_exp, fit_exp, puc_exp, per_exp, status_text])
-        
-    t = Table(table_data, colWidths=[100, 120, 100, 100, 95, 120, 120])
-    t.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#103A70')),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('TOPPADDING', (0,0), (-1,-1), 5),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-    ]))
-    story.append(t)
-    doc.build(story)
-    return pdf_path
-
-# ==========================================
-# 5. MAIN STREAMLIT APP
-# ==========================================
-def main():
-    # लोगो लोड करणे
-    for l_file in ["logo.jpeg", "logo.jpg", "logo.png"]:
-        if os.path.exists(l_file):
-            col_l, col_m, col_r = st.columns([1, 4, 1])
-            with col_m:
-                st.image(l_file, width=120)
-            break
-
-    st.markdown("<h1 style='text-align: center; color: #1e3a8a;'>R.R. LOGISTICS TRANSPORT PVT. LTD.</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #475569;'><b>TRANSPORT CONTRACTOR & COMMISSION AGENT</b> | Dhule Jurisdiction</p>", unsafe_allow_html=True)
-    st.markdown("---")
-    
-    stored_password = get_setting("admin_password", "rr123")
-    stored_security_pin = get_setting("security_pin", "9822")
-
-    st.sidebar.title("🔐 सिस्टीम लॉगिन")
-    username = st.sidebar.text_input("User ID", key="login_user")
-    password = st.sidebar.text_input("Password", type="password", key="login_pass")
-    
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-
-    if st.sidebar.button("Login"):
-        if username == "admin" and password == stored_password:
-            st.session_state.logged_in = True
-            st.sidebar.success("सक्सेसफुली लॉगिन झाले! ✅")
-        else:
-            st.sidebar.error("चुकीचा User ID किंवा Password!")
-
-    with st.sidebar.expander("🔑 पासवर्ड बदला / विसरलात का?"):
-        st.caption("पासवर्ड रीसेट करण्यासाठी सिक्युरिटी पिन टाका:")
-        recovery_code = st.text_input("Security PIN", type="password", key="sec_pin")
-        new_pass = st.text_input("नवीन पासवर्ड", type="password", key="new_pwd")
-        confirm_pass = st.text_input("पासवर्ड खात्री करा", type="password", key="conf_pwd")
-        
-        if st.button("कायमस्वरूपी पासवर्ड अपडेट करा"):
-            if recovery_code == stored_security_pin:
-                if new_pass and new_pass == confirm_pass:
-                    set_setting("admin_password", new_pass)
-                    st.success("नवीन पासवर्ड सेव्ह झाला! ✅")
-                else:
-                    st.error("दोन्ही पासवर्ड जुळत नाहीत किंवा रिकामे आहेत!")
-            else:
-                st.error("चुकीचा Security PIN!")
-
-    if st.session_state.logged_in:
-        st.sidebar.markdown("---")
-        menu = st.sidebar.radio("मेन्यू निवडा:", [
-            "१. Vehicle Registration & Records", 
-            "२. Driver Registration & Records", 
-            "३. Trip Information & Auto LR Generation", 
-            "४. Trip Sheet (Auto Excel & PDF)",
-            "५. Saved Records & View Documents"
-        ], key="dashboard_menu")
-        
-        existing_vehicles = fetch_vehicle_list()
-        all_drivers = fetch_driver_list()
-        driver_options = {d[0]: f"{d[1]} ({d[0]})" for d in all_drivers}
-
-        # --- MENU 1: VEHICLE REGISTRATION ---
-        if menu == "१. Vehicle Registration & Records":
-            st.subheader("🚛 गाडी नोंदणी, माहिती संपादन व डॉक्युमेंट्स")
-            
-            selected_existing_veh = st.selectbox("नोंदणीकृत गाडी निवडा (माहिती पाहण्यासाठी/बदलण्यासाठी):", ["-- नवीन गाडी नोंदवा --"] + existing_vehicles)
-            
-            v_curr = None
-            if selected_existing_veh != "-- नवीन गाडी नोंदवा --":
-                v_curr = get_vehicle_data(selected_existing_veh)
-
-            v_col1, v_col2 = st.columns(2)
-            with v_col1:
-                veh_no = st.text_input("गाडी क्रमांक (Vehicle Number)", value=v_curr[0] if v_curr else "MH18BZ2240")
-                veh_owner = st.text_input("मालकाचे नाव (Owner Name)", value=v_curr[1] if v_curr else "")
-            with v_col2:
-                veh_type = st.text_input("गाडीचा प्रकार (Vehicle Type)", value=v_curr[2] if v_curr else "14 Wheeler")
-                veh_cap = st.text_input("क्षमता टनांमध्ये (Capacity in Ton)", value=v_curr[3] if v_curr else "42")
-
-            # डिफॉल्ट ड्रायव्हर लिंकिंग
-            dl_keys = list(driver_options.keys())
-            default_dl_idx = 0
-            if v_curr and v_curr[4] in dl_keys:
-                default_dl_idx = dl_keys.index(v_curr[4]) + 1
-
-            sel_driver = st.selectbox("डिफॉल्ट ड्रायव्हर निवडा:", ["-- निवडा --"] + [driver_options[k] for k in dl_keys], index=default_dl_idx)
-            sel_dl_code = ""
-            if sel_driver != "-- निवडा --":
-                sel_idx = (["-- निवडा --"] + [driver_options[k] for k in dl_keys]).index(sel_driver)
-                sel_dl_code = dl_keys[sel_idx - 1]
-
-            st.markdown("---")
-            st.markdown("### 📂 कागदपत्रे आणि एक्सपायरी तारीख (Expiry Dates)")
-            
-            d1, d2 = st.columns(2)
-            with d1:
-                rc_file = st.file_uploader(f"1. RC Book {'(आधी सेव्ह आहे ✅)' if v_curr and v_curr[5] else ''}", type=["pdf", "jpg", "png"], key="rc_up")
-                insurance_file = st.file_uploader(f"2. Insurance {'(आधी सेव्ह आहे ✅)' if v_curr and v_curr[6] else ''}", type=["pdf", "jpg", "png"], key="ins_up")
-                ins_default_date = datetime.strptime(v_curr[7], "%Y-%m-%d").date() if v_curr and v_curr[7] else datetime.now().date() + timedelta(days=180)
-                ins_exp = st.date_input("इन्शुरन्स एक्सपायरी", ins_default_date, key="ins_exp_key")
-                
-                fitness_file = st.file_uploader(f"3. Fitness Certificate {'(आधी सेव्ह आहे ✅)' if v_curr and v_curr[8] else ''}", type=["pdf", "jpg", "png"], key="fit_up")
-                fit_default_date = datetime.strptime(v_curr[9], "%Y-%m-%d").date() if v_curr and v_curr[9] else datetime.now().date() + timedelta(days=180)
-                fit_exp = st.date_input("फिटनेस एक्सपायरी", fit_default_date, key="fit_exp_key")
-                
-            with d2:
-                puc_file = st.file_uploader(f"4. PUC {'(आधी सेव्ह आहे ✅)' if v_curr and v_curr[10] else ''}", type=["pdf", "jpg", "png"], key="puc_up")
-                puc_default_date = datetime.strptime(v_curr[11], "%Y-%m-%d").date() if v_curr and v_curr[11] else datetime.now().date() + timedelta(days=90)
-                puc_exp = st.date_input("PUC एक्सपायरी", puc_default_date, key="puc_exp_key")
-                
-                permit_file = st.file_uploader(f"5. National Permit {'(आधी सेव्ह आहे ✅)' if v_curr and v_curr[12] else ''}", type=["pdf", "jpg", "png"], key="per_up")
-                per_default_date = datetime.strptime(v_curr[13], "%Y-%m-%d").date() if v_curr and v_curr[13] else datetime.now().date() + timedelta(days=365)
-                per_exp = st.date_input("परमिट एक्सपायरी", per_default_date, key="per_exp_key")
-            
-            if st.button("गाडीची माहिती व कागदपत्रे कायम सेव्ह करा"):
-                if veh_no:
-                    rc_path = save_uploaded_file(rc_file, f"{veh_no}_RC", v_curr[5] if v_curr else "")
-                    ins_path = save_uploaded_file(insurance_file, f"{veh_no}_INS", v_curr[6] if v_curr else "")
-                    fit_path = save_uploaded_file(fitness_file, f"{veh_no}_FIT", v_curr[8] if v_curr else "")
-                    puc_path = save_uploaded_file(puc_file, f"{veh_no}_PUC", v_curr[10] if v_curr else "")
-                    per_path = save_uploaded_file(permit_file, f"{veh_no}_PER", v_curr[12] if v_curr else "")
-                    
-                    conn = get_db_connection()
-                    c = conn.cursor()
-                    c.execute('''INSERT OR REPLACE INTO vehicles VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', 
-                              (veh_no, veh_owner, veh_type, veh_cap, sel_dl_code, rc_path, ins_path, str(ins_exp), 
-                               fit_path, str(fit_exp), puc_path, str(puc_exp), per_path, str(per_exp), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"गाडी क्र. {veh_no} ची माहिती कायमस्वरूपी सेव्ह झाली! ✅")
-                    st.rerun()
-                else:
-                    st.warning("कृपया गाडी क्रमांक प्रविष्ट करा!")
-
-        # --- MENU 2: DRIVER REGISTRATION ---
-        elif menu == "२. Driver Registration & Records":
-            st.subheader("👨‍✈️ ड्रायव्हर नोंदणी व बँक तपशील")
-            
-            sel_exist_dl = st.selectbox("नोंदणीकृत ड्रायव्हर निवडा (डेटा पाहण्यासाठी / बदलण्यासाठी):", ["-- नवीन ड्रायव्हर नोंदवा --"] + [f"{d[1]} - {d[0]}" for d in all_drivers])
-            
-            d_curr = None
-            if sel_exist_dl != "-- नवीन ड्रायव्हर नोंदवा --":
-                target_dl = sel_exist_dl.split(" - ")[-1]
-                d_curr = get_driver_data(target_dl)
-
-            d_col1, d_col2 = st.columns(2)
-            with d_col1:
-                drv_name = st.text_input("ड्रायव्हरचे नाव", value=d_curr[1] if d_curr else "Ramesh Pawar")
-                drv_mob = st.text_input("मोबाईल नंबर", value=d_curr[2] if d_curr else "9823000000")
-                drv_dl_no = st.text_input("ड्रायव्हिंग लायसन्स नंबर", value=d_curr[0] if d_curr else "MH1820120004567")
-            with d_col2:
-                drv_aad_no = st.text_input("आधार कार्ड नंबर", value=d_curr[3] if d_curr else "")
-                drv_upi = st.text_input("UPI Number / GPay / PhonePe", value=d_curr[4] if d_curr else "")
-            
-            st.markdown("---")
-            st.markdown("### 🏦 बँक तपशील आणि कागदपत्रे")
-            b_col1, b_col2, b_col3 = st.columns(3)
-            with b_col1:
-                bank_name = st.text_input("बँकेचे नाव", value=d_curr[5] if d_curr else "")
-            with b_col2:
-                acc_no = st.text_input("खाते क्रमांक", value=d_curr[6] if d_curr else "")
-            with b_col3:
-                ifsc_code = st.text_input("IFSC कोड", value=d_curr[7] if d_curr else "")
-            
-            up_col1, up_col2 = st.columns(2)
-            with up_col1:
-                aadhar_file = st.file_uploader(f"Aadhaar Card Upload {'(आधी सेव्ह आहे ✅)' if d_curr and d_curr[8] else ''}", type=["pdf", "jpg", "png"], key="aadhar_up")
-            with up_col2:
-                licence_file = st.file_uploader(f"Driving Licence Upload {'(आधी सेव्ह आहे ✅)' if d_curr and d_curr[9] else ''}", type=["pdf", "jpg", "png"], key="lic_up")
-            
-            if st.button("ड्रायव्हरची संपूर्ण माहिती सेव्ह करा"):
-                if drv_dl_no and drv_name:
-                    aad_path = save_uploaded_file(aadhar_file, f"{drv_dl_no}_Aadhaar", d_curr[8] if d_curr else "")
-                    lic_path = save_uploaded_file(licence_file, f"{drv_dl_no}_Licence", d_curr[9] if d_curr else "")
-                    
-                    conn = get_db_connection()
-                    c = conn.cursor()
-                    c.execute('''INSERT OR REPLACE INTO drivers VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
-                              (drv_dl_no, drv_name, drv_mob, drv_aad_no, drv_upi, bank_name, acc_no, ifsc_code, aad_path, lic_path, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                    conn.commit()
-                    conn.close()
-                    st.success(f"ड्रायव्हर {drv_name} चा रेकॉर्ड डेटाबेसमध्ये कायम सेव्ह झाला! ✅")
-                    st.rerun()
-                else:
-                    st.warning("कृपया ड्रायव्हरचे नाव व लायसन्स नंबर प्रविष्ट करा!")
-
-        # --- MENU 3: TRIP INFO & AUTO LR GENERATION (WITH DI & BOLT/SEAL NO.) ---
-        elif menu == "३. Trip Information & Auto LR Generation":
-            st.subheader("📄 ट्रिप माहिती आणि LR (Bilty) निर्मिती")
-            st.info("⚡ गाडी निवडताच ड्रायव्हर, वजन आणि मागील ट्रिपचे सर्व तपशील आपोआप लोड होतील.")
-
-            sel_truck = st.selectbox("गाडी क्रमांक निवडा:", existing_vehicles if existing_vehicles else ["MH18BZ2240"], key="lr_veh_sel")
-            
-            # मागील ट्रिपचा डेटा लोड करणे
-            conn = get_db_connection()
-            c = conn.cursor()
-            c.execute("SELECT from_loc, to_loc, rate_ton, weight_ton, party_name, material_grade, di_no, bolt_seal_no FROM trip_sheets WHERE truck_no=? ORDER BY rowid DESC LIMIT 1", (sel_truck,))
-            last_trip = c.fetchone()
-            conn.close()
-            
-            v_data = get_vehicle_data(sel_truck)
-            d_auto_name, d_auto_dl, d_auto_mob = "", "", ""
-            if v_data and v_data[4]:
-                d_info = get_driver_data(v_data[4])
-                if d_info:
-                    d_auto_dl = d_info[0]
-                    d_auto_name = d_info[1]
-                    d_auto_mob = d_info[2]
-
-            # LR Number, DI Number आणि Bolt Seal Number
-            col_lr1, col_lr2, col_lr3 = st.columns(3)
-            with col_lr1:
-                lr_no = st.text_input("L.R. No. (एल.आर. नंबर)", value="1602/1603")
-            with col_lr2:
-                di_no = st.text_input("DI No. (डिस्पॅच सूचना क्र. / DI No.)", value=last_trip[6] if (last_trip and len(last_trip) > 6 and last_trip[6]) else "DI-99882")
-            with col_lr3:
-                bolt_no = st.text_input("Bolt / Seal No. (बोल्ट सील क्रमांक)", value=last_trip[7] if (last_trip and len(last_trip) > 7 and last_trip[7]) else "BT-4455")
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                from_loc = st.text_input("From (कुठून)", value=last_trip[0] if last_trip else "WONDER")
-                consignor = st.text_area("Consignor", value="Ultratech Cement Depo, Sarwad")
-                d_name = st.text_input("Driver Name", value=d_auto_name if d_auto_name else "Ramesh Pawar")
-            with col2:
-                truck_no = st.text_input("Truck No.", value=sel_truck)
-                to_loc = st.text_input("To (कुठे)", value=last_trip[1] if last_trip else "MALEGAON")
-                consignee = st.text_area("Consignee", value="Self / Party Warehouse, Malegaon")
-                d_dl = st.text_input("D.L. No.", value=d_auto_dl if d_auto_dl else "MH1820120004567")
-            with col3:
-                date_val = st.text_input("Date", value=datetime.now().strftime("%d-%m-%Y"))
-                c_gst = st.text_input("Consignor GSTIN", value="27AABCU1234F1Z5")
-                c_eway = st.text_input("E-way Bill No.", value="EW-889923410")
-                d_mobile = st.text_input("Driver Mobile No.", value=d_auto_mob if d_auto_mob else "9823000000")
-            
-            st.markdown("---")
-            col_ex1, col_ex2, col_ex3, col_ex4 = st.columns(4)
-            with col_ex1:
-                weight = st.text_input("Weight (वजन टनांमध्ये)", value=str(last_trip[3]) if last_trip else (v_data[3] if v_data and v_data[3] else "42"))
-            with col_ex2:
-                grade_list = ["PPC", "Super", "OPC 43", "OPC 53", "PSC", "Composite", "Loose / Bulk"]
-                default_grade_idx = 0
-                if last_trip and len(last_trip) > 5 and last_trip[5] in grade_list:
-                    default_grade_idx = grade_list.index(last_trip[5])
-                mat_grade = st.selectbox("मटेरियल / ग्रेड निवडा (Material Grade):", grade_list, index=default_grade_idx)
-            with col_ex3:
-                rate_val = last_trip[2] if last_trip else 539.0
-                calc_f = float(weight) * float(rate_val) if weight else 0.0
-                freight = st.text_input("एकूण भाडे (Freight ₹)", value=str(round(calc_f, 2)))
-            with col_ex4:
-                order_by = st.text_input("Order By", value=last_trip[4] if last_trip else "DEPO")
-
-            if st.button("LR PDF तयार करा"):
-                if lr_no:
-                    pdf_file_path = generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade)
-                    st.success("अधिकृत LR PDF तयार झाली आहे! 👇")
-                    with open(pdf_file_path, "rb") as f:
-                        st.download_button(
-                            label="📥 डाऊनलोड ऑफिशियल LR PDF",
-                            data=f,
-                            file_name=f"LR_{lr_no.replace('/', '_')}_Official.pdf",
-                            mime="application/pdf"
-                        )
-                else:
-                    st.warning("कृपया L.R. No. प्रविष्ट करा!")
-
-        # --- MENU 4: TRIP SHEET (AUTO EXCEL & PDF WITH ALL EXPENSES) ---
-        elif menu == "४. Trip Sheet (Auto Excel & PDF)":
-            st.subheader("📊 R. R. LOGISTICS, DHULE - संपूर्ण ट्रिप शीट")
-            st.caption("💡 डिझेल आणि सर्व ट्रिप खर्च थेट या शीटमध्ये नोंदवले जातात.")
-
-            truck_choice = st.selectbox("गाडी क्रमांक निवडा:", existing_vehicles if existing_vehicles else ["MH18BZ2240"], key="ts_veh_sel")
-            
-            conn = get_db_connection()
-            c = conn.cursor()
-            c.execute("SELECT from_loc, to_loc, rate_ton, weight_ton, party_name, end_km, material_grade, di_no, bolt_seal_no FROM trip_sheets WHERE truck_no=? ORDER BY rowid DESC LIMIT 1", (truck_choice,))
-            last_ts = c.fetchone()
-            conn.close()
-
-            # L.R., DI आणि Bolt No.
-            col_ts_top1, col_ts_top2, col_ts_top3 = st.columns(3)
-            with col_ts_top1:
-                ts_lr = st.text_input("LR.NO", value="1602/1603")
-            with col_ts_top2:
-                ts_di = st.text_input("DI No.", value=last_ts[7] if (last_ts and len(last_ts) > 7 and last_ts[7]) else "DI-99882")
-            with col_ts_top3:
-                ts_bolt = st.text_input("Bolt / Seal No.", value=last_ts[8] if (last_ts and len(last_ts) > 8 and last_ts[8]) else "BT-4455")
-
-            t1, t2, t3, t4 = st.columns(4)
-            with t1:
-                ts_from = st.text_input("From", value=last_ts[0] if last_ts else "WONDER")
-                ts_rate = st.number_input("Rate (per Ton)", min_value=0.0, value=float(last_ts[2]) if last_ts else 539.0, step=1.0)
-                ts_bill = st.text_input("Bill No", value="")
-            with t2:
-                ts_ldate = st.text_input("Loading Date", value=datetime.now().strftime("%d-%m-%Y"))
-                ts_to = st.text_input("To", value=last_ts[1] if last_ts else "MALEGAON")
-                ts_weight = st.number_input("Weight (Tons)", min_value=0.0, value=float(last_ts[3]) if last_ts else 42.0, step=0.5)
-            with t3:
-                ts_date = st.text_input("Date", value=datetime.now().strftime("%d-%m-%Y"))
-                ts_truck = st.text_input("Truck No", value=truck_choice)
-                grade_options = ["PPC", "Super", "OPC 43", "OPC 53", "PSC", "Composite", "Loose / Bulk"]
-                default_g_idx = 0
-                if last_ts and len(last_ts) > 6 and last_ts[6] in grade_options:
-                    default_g_idx = grade_options.index(last_ts[6])
-                ts_grade = st.selectbox("Material / Grade", grade_options, index=default_g_idx)
-            with t4:
-                calc_freight = round(ts_rate * ts_weight, 2)
-                st.metric("Freight (भाडे रक्कम)", f"₹ {calc_freight:,.2f}")
-                ts_party = st.text_input("Party Name", value=last_ts[4] if last_ts else "DEPO")
-                last_end_km = last_ts[5] if last_ts and last_ts[5] else 0
-                ts_start_km = st.number_input("Start Km", min_value=0, value=last_end_km)
-                ts_end_km = st.number_input("End Km", min_value=0, value=last_end_km + 250)
-                calc_run_km = ts_end_km - ts_start_km
-                st.metric("Running Km", f"{calc_run_km} KM")
-
-            st.markdown("---")
-            st.markdown("#### 💰 डिझेल व ट्रिप खर्च नोंद (Expenses & Diesel)")
-
-            c_e1, c_e2, c_e3 = st.columns(3)
-            with c_e1:
-                exp_adv = st.number_input("Trip Adv (अ‍ॅडव्हान्स)", min_value=0.0, value=6000.0, step=500.0)
-                adv_date = st.text_input("Adv Date", value=datetime.now().strftime("%d-%m-%Y"))
-                exp_unloading = st.number_input("Unloading", min_value=0.0, value=0.0)
-                exp_food = st.number_input("Food (जेवण)", min_value=0.0, value=0.0)
-                exp_tyre = st.number_input("Tyre Bill", min_value=0.0, value=0.0)
-
-            with c_e2:
-                exp_ft1 = st.number_input("FasTag-1", min_value=0.0, value=0.0)
-                exp_ft2 = st.number_input("FasTag-2", min_value=0.0, value=0.0)
-                exp_comm = st.number_input("Commission", min_value=0.0, value=0.0)
-                exp_maint = st.number_input("Maintenance", min_value=0.0, value=0.0)
-                exp_other = st.number_input("Other Exp", min_value=0.0, value=0.0)
-
-            with c_e3:
-                st.markdown("**⛽ डिझेल तपशील (Diesel Entry)**")
-                d1_ltr = st.number_input("Diesel-1 (Ltr)", min_value=0.0, value=90.0, step=5.0)
-                d1_rate = st.number_input("Diesel-1 (Rate)", min_value=0.0, value=98.52, step=0.1)
-                d1_amt = round(d1_ltr * d1_rate, 2)
-                st.write(f"Diesel-1 Amount: ₹ {d1_amt}")
-                d1_date = st.text_input("Diesel-1 Date", value=datetime.now().strftime("%d-%m-%Y"))
-                d1_pump = st.text_input("Diesel-1 Pump", value="R.R. Petroleum, Sarwad")
-                
-                st.markdown("---")
-                d2_ltr = st.number_input("Diesel-2 (Ltr)", min_value=0.0, value=0.0)
-                d2_rate = st.number_input("Diesel-2 (Rate)", min_value=0.0, value=0.0)
-                d2_amt = round(d2_ltr * d2_rate, 2)
-                d2_date = st.text_input("Diesel-2 Date", value="")
-                d2_pump = st.text_input("Diesel-2 Pump", value="")
-
-            tot_diesel_ltr = round(d1_ltr + d2_ltr, 2)
-            tot_exp = round(exp_adv + exp_unloading + exp_food + exp_tyre + exp_ft1 + exp_ft2 + d1_amt + d2_amt + exp_comm + exp_maint + exp_other, 2)
-            trip_bal = round(calc_freight - tot_exp, 2)
-            avg_km = round(calc_run_km / tot_diesel_ltr, 2) if tot_diesel_ltr > 0 else 0
-
-            st.markdown("---")
-            st.markdown("### 📋 ट्रिप सारांश (Auto Summary)")
-            s1, s2, s3, s4 = st.columns(4)
-            s1.metric("एकूण भाडे (Freight)", f"₹ {calc_freight:,.2f}")
-            s2.metric("एकूण खर्च (Total Exp)", f"₹ {tot_exp:,.2f}")
-            s3.metric("शिल्लक रक्कम (Trip Balance)", f"₹ {trip_bal:,.2f}")
-            s4.metric("सरासरी (Average)", f"{avg_km} Km/L")
-
-            ts_dict = {
-                'lr_no': ts_lr, 'di_no': ts_di, 'bolt_seal_no': ts_bolt,
-                'loading_date': ts_ldate, 'date_val': ts_date,
-                'from_loc': ts_from, 'to_loc': ts_to, 'truck_no': ts_truck,
-                'rate_ton': ts_rate, 'weight_ton': ts_weight,
-                'bill_no': ts_bill, 'otp': "", 'party_name': ts_party,
-                'material_grade': ts_grade,
-                'start_km': ts_start_km, 'end_km': ts_end_km,
-                'trip_adv': exp_adv, 'adv_date': adv_date,
-                'unloading': exp_unloading, 'food': exp_food, 'tyre_bill': exp_tyre,
-                'fastag1': exp_ft1, 'fastag2': exp_ft2,
-                'd1_ltr': d1_ltr, 'd1_rate': d1_rate, 'd1_date': d1_date, 'd1_pump': d1_pump,
-                'd2_ltr': d2_ltr, 'd2_rate': d2_rate, 'd2_date': d2_date, 'd2_pump': d2_pump,
-                'commission': exp_comm, 'maintenance': exp_maint, 'other_exp': exp_other
-            }
-
-            if st.button("💾 ही ट्रिप शीट डेटाबेसमध्ये कायमस्वरूपी सेव्ह करा"):
-                conn = get_db_connection()
-                c = conn.cursor()
-                c.execute('''INSERT OR REPLACE INTO trip_sheets (
-                                lr_no, loading_date, date_val, from_loc, to_loc, truck_no, driver_dl, driver_name, driver_mob,
-                                rate_ton, weight_ton, freight, bill_no, otp, party_name, material_grade, di_no, bolt_seal_no,
-                                start_km, end_km, running_km, trip_adv, unloading, food, tyre_bill, fastag1, fastag2,
-                                diesel_ltr, diesel_amt, commission, maintenance, other_exp, total_exp, trip_balance, created_at
-                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                          (ts_lr, ts_ldate, ts_date, ts_from, ts_to, ts_truck, "", "", "", ts_rate, ts_weight, calc_freight,
-                           ts_bill, "", ts_party, ts_grade, ts_di, ts_bolt, ts_start_km, ts_end_km, calc_run_km, exp_adv, exp_unloading,
-                           exp_food, exp_tyre, exp_ft1, exp_ft2, tot_diesel_ltr, (d1_amt+d2_amt), exp_comm, exp_maint,
-                           exp_other, tot_exp, trip_bal, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                conn.commit()
-                conn.close()
-                st.success(f"LR No. {ts_lr} ची ट्रिप शीट डेटाबेसमध्ये कायमस्वरूपी सेव्ह झाली! ✅")
-
-            st.markdown("---")
-            st.markdown("### 📥 फाईल डाऊनलोड करा (Excel & PDF)")
-            down_col1, down_col2 = st.columns(2)
-            
-            with down_col1:
-                if HAS_OPENPYXL:
-                    excel_bytes = generate_trip_sheet_excel(ts_dict)
-                    st.download_button(
-                        label="📊 डाऊनलोड Trip Sheet Excel (with Live Formulas)",
-                        data=excel_bytes,
-                        file_name=f"TripSheet_{ts_lr.replace('/', '_')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    df_ts = pd.DataFrame([ts_dict])
-                    st.download_button(
-                        label="📊 डाऊनलोड Trip Sheet CSV",
-                        data=df_ts.to_csv(index=False).encode('utf-8'),
-                        file_name=f"TripSheet_{ts_lr.replace('/', '_')}.csv",
-                        mime="text/csv"
-                    )
-
-            with down_col2:
-                pdf_file_path = generate_trip_sheet_pdf(ts_dict)
-                with open(pdf_file_path, "rb") as f:
-                    st.download_button(
-                        label="📄 डाऊनलोड Trip Sheet PDF",
-                        data=f,
-                        file_name=f"TripSheet_{ts_lr.replace('/', '_')}.pdf",
-                        mime="application/pdf"
-                    )
-
-        # --- MENU 5: SAVED RECORDS & EXPIRY REPORT ---
-        elif menu == "५. Saved Records & View Documents":
-            st.subheader("📁 सेव्ह केलेला डेटा, कागदपत्रे व डॉक्युमेंट एक्सपायरी रिपोर्ट")
-            
-            tab1, tab2, tab3 = st.tabs(["🚛 वाहने व डॉक्युमेंट एक्सपायरी", "📄 सेव्ह केलेल्या ट्रिप शीट्स", "👨‍✈️ ड्रायव्हर रेकॉर्ड्स"])
-            conn = get_db_connection()
-            
-            with tab1:
-                st.markdown("#### 🚚 वाहने व कागदपत्रे एक्सपायरी स्थिती")
-                v_df = pd.read_sql_query("SELECT veh_no, owner_name, veh_type, ins_exp, fit_exp, puc_exp, per_exp FROM vehicles", conn)
-                if not v_df.empty:
-                    st.dataframe(v_df, use_container_width=True)
-                    c = conn.cursor()
-                    c.execute("SELECT * FROM vehicles")
-                    v_all = c.fetchall()
-                    exp_pdf = generate_doc_expiry_pdf(v_all)
-                    with open(exp_pdf, "rb") as f:
-                        st.download_button(
-                            label="📥 डाऊनलोड सर्व गाड्यांचा एक्सपायरी PDF रिपोर्ट",
-                            data=f,
-                            file_name=f"Vehicle_Doc_Expiry_{datetime.now().strftime('%Y%m%d')}.pdf",
-                            mime="application/pdf"
-                        )
-                else:
-                    st.info("अद्याप कोणतीही गाडी नोंदणीकृत नाही.")
-                    
-                st.markdown("---")
-                st.markdown("##### 🔍 गाडीचे सेव्ह कागदपत्र पहा / डाउनलोड करा:")
-                sel_veh = st.selectbox("गाडी निवडा:", v_df['veh_no'].tolist() if not v_df.empty else [])
-                if sel_veh:
-                    c = conn.cursor()
-                    c.execute("SELECT rc_doc, ins_doc, fit_doc, puc_doc, per_doc FROM vehicles WHERE veh_no=?", (sel_veh,))
-                    docs = c.fetchone()
-                    d_names = ["RC Book", "Insurance", "Fitness", "PUC", "National Permit"]
-                    for name, path in zip(d_names, docs):
-                        if path and os.path.exists(path):
-                            with open(path, "rb") as file_data:
-                                st.download_button(f"📥 डाउनलोड {name} ({os.path.basename(path)})", data=file_data, file_name=os.path.basename(path), key=f"dl_{name}_{sel_veh}")
-                        else:
-                            st.caption(f"{name}: कागदपत्र उपलब्ध नाही")
-
-            with tab2:
-                st.markdown("#### 📑 सेव्ह केलेल्या सर्व ट्रिप शीट्स")
-                t_df = pd.read_sql_query("SELECT lr_no, di_no, bolt_seal_no, date_val, truck_no, from_loc, to_loc, material_grade, freight, total_exp, trip_balance, created_at FROM trip_sheets", conn)
-                if not t_df.empty:
-                    st.dataframe(t_df, use_container_width=True)
-                else:
-                    st.info("अद्याप कोणतीही ट्रिप शीट सेव्ह केलेली नाही.")
-
-            with tab3:
-                st.markdown("#### 👨‍✈️ ड्रायव्हर यादी व बँक तपशील")
-                d_df = pd.read_sql_query("SELECT dl_no, driver_name, mobile, bank_name, acc_no, ifsc, created_at FROM drivers", conn)
-                if not d_df.empty:
-                    st.dataframe(d_df, use_container_width=True)
-                else:
-                    st.info("अद्याप कोणत्याही ड्रायव्हरची नोंदणी नाही.")
-            
-            conn.close()
-
-    else:
-        st.info("कृपया सिस्टीममध्ये प्रवेश करण्यासाठी युझर आयडी आणि पासवर्ड टाकून लॉगिन करा.")
-
-if __name__ == '__main__':
-    main()
+                        alerts.append(
