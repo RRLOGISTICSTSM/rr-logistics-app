@@ -22,7 +22,7 @@ except ImportError:
 st.set_page_config(page_title="R.R. Logistics TSM", page_icon="🚚", layout="wide")
 
 # ==========================================
-# 0. DATABASE & STORAGE SETUP (डेटाबेस सेटअप)
+# 0. DATABASE & STORAGE SETUP
 # ==========================================
 UPLOAD_FOLDER = "saved_documents"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -31,7 +31,7 @@ def init_db():
     conn = sqlite3.connect("rr_logistics.db")
     c = conn.cursor()
     
-    # ॲप सेटिंग्ज आणि कायमस्वरूपी पासवर्ड
+    # ॲप सेटिंग्ज आणि पासवर्ड कायमस्वरूपी सेव्ह ठेवण्यासाठी
     c.execute('''CREATE TABLE IF NOT EXISTS app_settings (
                     key_name TEXT PRIMARY KEY,
                     key_value TEXT
@@ -39,7 +39,7 @@ def init_db():
     c.execute("INSERT OR IGNORE INTO app_settings VALUES ('admin_password', 'rr123')")
     c.execute("INSERT OR IGNORE INTO app_settings VALUES ('security_pin', '9822')")
 
-    # वाहनांचे टेबल (जुना डेटा सुरक्षित राहील)
+    # वाहनांचे टेबल
     c.execute('''CREATE TABLE IF NOT EXISTS vehicles (
                     veh_no TEXT PRIMARY KEY,
                     owner_name TEXT,
@@ -58,7 +58,7 @@ def init_db():
                     created_at TEXT
                 )''')
 
-    # ड्रायव्हर्स टेबल (जुना डेटा सुरक्षित राहील)
+    # ड्रायव्हर्स टेबल
     c.execute('''CREATE TABLE IF NOT EXISTS drivers (
                     dl_no TEXT PRIMARY KEY,
                     driver_name TEXT,
@@ -110,7 +110,7 @@ def init_db():
                     created_at TEXT
                 )''')
 
-    # जुना डेटा सुरक्षित ठेवून नवीन कॉलम्स तपासणे व जोडणे
+    # सुरक्षित Schema Migration - जुना डेटा डिलीट न होता नवीन कॉलम्स जोडणे
     c.execute("PRAGMA table_info(trip_sheets)")
     existing_cols = [col[1] for col in c.fetchall()]
     if "di_no" not in existing_cols:
@@ -134,7 +134,6 @@ def init_db():
 
 init_db()
 
-# डेटाबेस हेल्पर फंक्शन्स
 def get_db_connection():
     return sqlite3.connect("rr_logistics.db")
 
@@ -194,9 +193,9 @@ def save_uploaded_file(uploaded_file, prefix, existing_path=""):
     return file_path
 
 # ==========================================
-# 1. LR PDF GENERATION (DI NEXT TO LR, NO GST)
+# 1. LR PDF GENERATION FUNCTION
 # ==========================================
-def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade):
+def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade):
     temp_dir = tempfile.gettempdir()
     safe_lr = str(lr_no).replace('/', '_')
     pdf_path = os.path.join(temp_dir, f"LR_{safe_lr}.pdf")
@@ -209,7 +208,6 @@ def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to
     sub_style = ParagraphStyle('SubStyle', parent=styles['Normal'], fontSize=8.5, textColor=colors.HexColor('#1e3a8a'), alignment=1, spaceAfter=2)
     addr_style = ParagraphStyle('AddrStyle', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#334155'), alignment=1, spaceAfter=8)
     
-    # R.R. Logistics लोगो तपासणी
     for l_file in ["logo.jpeg", "logo.jpg", "logo.png"]:
         if os.path.exists(l_file):
             img = RLImage(l_file, width=80, height=55)
@@ -223,11 +221,10 @@ def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to
     story.append(Paragraph("TRANSPORT CONTRACTOR & COMMISSION AGENT", sub_style))
     story.append(Paragraph("Gat No. 298-2A, R.R. Petroleum, Mumbai-Agra Highway, Sarwad, Dhule.<br/><b>Mob: 9822414040 / 9049521177</b>", addr_style))
     
-    # पहिल्या ओळीत L.R. No. च्या अगदी बाजूला D.I. No.
     data = [
         [
             Paragraph(f"<b>L.R. No. :</b> {lr_no}", styles['Normal']),
-            Paragraph(f"<b>D.I. No. :</b> {di_no}", styles['Normal']),
+            Paragraph(f"<b>DI No. :</b> {di_no}<br/><b>Bolt / Seal No. :</b> {bolt_no}", styles['Normal']),
             Paragraph(f"<b>Date :</b> {date_val}<br/><b>Truck No. :</b> {truck_no}", styles['Normal'])
         ],
         [
@@ -236,9 +233,9 @@ def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to
             Paragraph(f"<b>To :</b> {to_loc}", styles['Normal'])
         ],
         [
-            Paragraph(f"<b>Consignor:</b><br/>{consignor}<br/><br/><b>E-way Bill No. :</b> {c_eway}", styles['Normal']),
+            Paragraph(f"<b>Consignor:</b><br/>{consignor}<br/><br/><b>GSTIN No. :</b> {c_gst}<br/><b>E-way Bill No. :</b> {c_eway}", styles['Normal']),
             "",
-            Paragraph(f"<b>Consignee:</b><br/>{consignee}<br/><br/><b>Material / Grade:</b> {mat_grade}<br/><b>Bolt / Seal No. :</b> {bolt_no}", styles['Normal'])
+            Paragraph(f"<b>Consignee:</b><br/>{consignee}<br/><br/><b>Material / Grade:</b> {mat_grade}", styles['Normal'])
         ],
         [
             Paragraph(f"<b>Driver Name :</b> {d_name}", styles['Normal']),
@@ -418,89 +415,4 @@ def generate_trip_sheet_pdf(d):
     avg_kml = round(running_km / total_diesel, 2) if total_diesel > 0 else 0
     trip_bal = round(freight_val - tot_exp, 2)
 
-    table_data = [
-        ["R. R. LOGISTICS, DHULE - TRIP SHEET", "", "", "", "", "", "", ""],
-        ["LR.NO", str(d['lr_no']), "DI NO", str(d.get('di_no', '')), "Date", str(d['date_val']), "", ""],
-        ["From", str(d['from_loc']), "To", str(d['to_loc']), "Truck No", str(d['truck_no']), "", ""],
-        ["Rate (per Ton)", str(d['rate_ton']), "Freight", str(freight_val), "Weight (Tons)", str(d['weight_ton']), "", ""],
-        ["Bolt/Seal No", str(d.get('bolt_seal_no', '')), "Grade", str(d.get('material_grade', 'PPC')), "Party Name", str(d['party_name']), "", ""],
-        ["EXP", "Ltr", "Rate", "Amount", "Date", "Pump", "Summary", "Values"],
-        ["Trip Adv", "", "", str(d['trip_adv']), str(d['adv_date']), "", "Start Km", str(d['start_km'])],
-        ["Unloading", "", "", str(d['unloading']), "", "", "End Km", str(d['end_km'])],
-        ["Food", "", "", str(d['food']), "", "", "Running Km", str(running_km)],
-        ["Tyre Bill", "", "", str(d['tyre_bill']), "", "", "Total Diesel (Ltr)", str(total_diesel)],
-        ["FasTag-1", "", "", str(d['fastag1']), "", "", "Average (Km/L)", str(avg_kml)],
-        ["FasTag-2", "", "", str(d['fastag2']), "", "", "Trip Balance", str(trip_bal)],
-        ["Diesel-1", str(d['d1_ltr']), str(d['d1_rate']), str(d1_amt), str(d['d1_date']), str(d['d1_pump']), "", ""],
-        ["Diesel-2", str(d['d2_ltr']), str(d['d2_rate']), str(d2_amt), str(d['d2_date']), str(d['d2_pump']), "", ""],
-        ["Commission", "", "", str(d['commission']), "", "", "", ""],
-        ["Maintenance", "", "", str(d['maintenance']), "", "", "", ""],
-        ["Other", "", "", str(d['other_exp']), "", "", "", ""],
-        ["Total Exp", "", "", str(tot_exp), "", "", "Trip Balance", str(trip_bal)]
-    ]
-
-    t = Table(table_data, colWidths=[90, 60, 60, 80, 85, 110, 110, 85])
-    t.setStyle(TableStyle([
-        ('SPAN', (0, 0), (7, 0)),
-        ('BACKGROUND', (0, 0), (7, 0), colors.HexColor('#103A70')),
-        ('TEXTCOLOR', (0, 0), (7, 0), colors.white),
-        ('ALIGN', (0, 0), (7, 0), 'CENTER'),
-        ('FONTNAME', (0, 0), (7, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (7, 0), 13),
-        ('SPAN', (6, 1), (7, 4)),
-        ('BACKGROUND', (6, 1), (7, 4), colors.HexColor('#4F81BD')),
-        ('BACKGROUND', (0, 5), (7, 5), colors.HexColor('#95B3D7')),
-        ('FONTNAME', (0, 5), (7, 5), 'Helvetica-Bold'),
-        ('ALIGN', (0, 5), (7, 5), 'CENTER'),
-        ('BACKGROUND', (1, 6), (2, 11), colors.HexColor('#4F81BD')),
-        ('BACKGROUND', (1, 14), (2, 16), colors.HexColor('#4F81BD')),
-        ('FONTNAME', (0, 1), (0, 4), 'Helvetica-Bold'),
-        ('FONTNAME', (2, 1), (2, 4), 'Helvetica-Bold'),
-        ('FONTNAME', (4, 1), (4, 4), 'Helvetica-Bold'),
-        ('FONTNAME', (6, 6), (6, 11), 'Helvetica-Bold'),
-        ('FONTNAME', (0, 17), (0, 17), 'Helvetica-Bold'),
-        ('FONTNAME', (3, 17), (3, 17), 'Helvetica-Bold'),
-        ('FONTNAME', (6, 17), (7, 17), 'Helvetica-Bold'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('ALIGN', (0, 6), (-1, -1), 'CENTER'),
-    ]))
-    
-    story.append(t)
-    doc.build(story)
-    return pdf_path
-
-# ==========================================
-# 4. DOCUMENT EXPIRY PDF GENERATION
-# ==========================================
-def generate_doc_expiry_pdf(vehicle_rows):
-    temp_dir = tempfile.gettempdir()
-    pdf_path = os.path.join(temp_dir, f"Vehicle_Doc_Expiry_{datetime.now().strftime('%Y%m%d')}.pdf")
-    doc = SimpleDocTemplate(pdf_path, pagesize=landscape(letter), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
-    story = []
-    styles = getSampleStyleSheet()
-    
-    title = Paragraph("<b>R.R. LOGISTICS TRANSPORT PVT. LTD.</b><br/><font size=10>गाड्यांच्या कागदपत्रांचा एक्सपायरी रिपोर्ट (Vehicle Documents Expiry Status)</font>", ParagraphStyle('ExpTitle', parent=styles['Heading1'], alignment=1, fontSize=14, textColor=colors.HexColor('#1e3a8a')))
-    story.append(title)
-    story.append(Spacer(1, 10))
-    
-    table_data = [
-        ["गाडी क्रमांक", "मालकाचे नाव", "इन्शुरन्स एक्सपायरी", "फिटनेस एक्सपायरी", "PUC एक्सपायरी", "नॅशनल परमिट एक्सपायरी", "स्थिती (Status)"]
-    ]
-    
-    today = datetime.now().date()
-    for row in vehicle_rows:
-        veh_no = row[0]
-        owner = row[1]
-        ins_exp = row[7] or "N/A"
-        fit_exp = row[9] or "N/A"
-        puc_exp = row[11] or "N/A"
-        per_exp = row[13] or "N/A"
-        
-        alerts = []
-        for exp_val, name in [(ins_exp, "Ins"), (fit_exp, "Fit"), (puc_exp, "PUC"), (per_exp, "Permit")]:
-            if exp_val != "N/A":
-                try:
-                    exp_date = datetime.strptime(exp_val, "%Y-%m-%d").date()
-                    if exp_date < today:
-                        alerts.append(
+    table_data =
