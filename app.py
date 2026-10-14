@@ -22,7 +22,7 @@ except ImportError:
 st.set_page_config(page_title="R.R. Logistics TSM", page_icon="🚚", layout="wide")
 
 # ==========================================
-# 0. DATABASE & STORAGE SETUP
+# 0. DATABASE & STORAGE SETUP (डेटाबेस सेटअप)
 # ==========================================
 UPLOAD_FOLDER = "saved_documents"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -31,17 +31,15 @@ def init_db():
     conn = sqlite3.connect("rr_logistics.db")
     c = conn.cursor()
     
-    # ॲप सेटिंग्ज आणि पासवर्ड कायमस्वरूपी सेव्ह करण्यासाठी टेबल
+    # ॲप सेटिंग्ज आणि कायमस्वरूपी पासवर्ड
     c.execute('''CREATE TABLE IF NOT EXISTS app_settings (
                     key_name TEXT PRIMARY KEY,
                     key_value TEXT
                 )''')
-    
-    # डिफॉल्ट पासवर्ड सेट करणे
     c.execute("INSERT OR IGNORE INTO app_settings VALUES ('admin_password', 'rr123')")
     c.execute("INSERT OR IGNORE INTO app_settings VALUES ('security_pin', '9822')")
 
-    # वाहनांचे टेबल
+    # वाहनांचे टेबल (जुना डेटा कायम राहील)
     c.execute('''CREATE TABLE IF NOT EXISTS vehicles (
                     veh_no TEXT PRIMARY KEY,
                     owner_name TEXT,
@@ -60,7 +58,7 @@ def init_db():
                     created_at TEXT
                 )''')
 
-    # ड्रायव्हर्स टेबल
+    # ड्रायव्हर्स टेबल (जुना डेटा कायम राहील)
     c.execute('''CREATE TABLE IF NOT EXISTS drivers (
                     dl_no TEXT PRIMARY KEY,
                     driver_name TEXT,
@@ -75,7 +73,7 @@ def init_db():
                     created_at TEXT
                 )''')
 
-    # ट्रिप शीट्स टेबल (Material / Grade फील्डसह)
+    # ट्रिप शीट्स टेबल
     c.execute('''CREATE TABLE IF NOT EXISTS trip_sheets (
                     lr_no TEXT PRIMARY KEY,
                     loading_date TEXT,
@@ -111,6 +109,26 @@ def init_db():
                     trip_balance REAL,
                     created_at TEXT
                 )''')
+
+    # जुना डेटा सुरक्षित ठेवून नवीन कॉलम्स जोडणे (Safe Schema Upgrade)
+    c.execute("PRAGMA table_info(trip_sheets)")
+    existing_cols = [col[1] for col in c.fetchall()]
+    if "di_no" not in existing_cols:
+        try:
+            c.execute("ALTER TABLE trip_sheets ADD COLUMN di_no TEXT DEFAULT ''")
+        except:
+            pass
+    if "bolt_seal_no" not in existing_cols:
+        try:
+            c.execute("ALTER TABLE trip_sheets ADD COLUMN bolt_seal_no TEXT DEFAULT ''")
+        except:
+            pass
+    if "material_grade" not in existing_cols:
+        try:
+            c.execute("ALTER TABLE trip_sheets ADD COLUMN material_grade TEXT DEFAULT 'PPC'")
+        except:
+            pass
+
     conn.commit()
     conn.close()
 
@@ -176,9 +194,9 @@ def save_uploaded_file(uploaded_file, prefix, existing_path=""):
     return file_path
 
 # ==========================================
-# 1. LR PDF GENERATION FUNCTION (WITH GRADE & LOGO)
+# 1. LR PDF GENERATION FUNCTION (WITH DI & BOLT/SEAL NO.)
 # ==========================================
-def generate_official_lr(lr_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade):
+def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade):
     temp_dir = tempfile.gettempdir()
     safe_lr = str(lr_no).replace('/', '_')
     pdf_path = os.path.join(temp_dir, f"LR_{safe_lr}.pdf")
@@ -191,7 +209,7 @@ def generate_official_lr(lr_no, truck_no, date_val, from_loc, to_loc, consignor,
     sub_style = ParagraphStyle('SubStyle', parent=styles['Normal'], fontSize=8.5, textColor=colors.HexColor('#1e3a8a'), alignment=1, spaceAfter=2)
     addr_style = ParagraphStyle('AddrStyle', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#334155'), alignment=1, spaceAfter=8)
     
-    # R.R. Logistics लोगो तपासणी
+    # R.R. Logistics लोगो लोड करणे
     for l_file in ["logo.jpeg", "logo.jpg", "logo.png"]:
         if os.path.exists(l_file):
             img = RLImage(l_file, width=80, height=55)
@@ -208,8 +226,8 @@ def generate_official_lr(lr_no, truck_no, date_val, from_loc, to_loc, consignor,
     data = [
         [
             Paragraph(f"<b>L.R. No. :</b> {lr_no}", styles['Normal']),
-            Paragraph(f"<b>Truck No. :</b> {truck_no}", styles['Normal']),
-            Paragraph(f"<b>Date :</b> {date_val}", styles['Normal'])
+            Paragraph(f"<b>DI No. :</b> {di_no}<br/><b>Bolt / Seal No. :</b> {bolt_no}", styles['Normal']),
+            Paragraph(f"<b>Date :</b> {date_val}<br/><b>Truck No. :</b> {truck_no}", styles['Normal'])
         ],
         [
             Paragraph(f"<b>From :</b> {from_loc}", styles['Normal']),
@@ -292,10 +310,10 @@ def generate_trip_sheet_excel(d):
     title_cell.alignment = Alignment(horizontal="center", vertical="center")
     
     headers_meta = [
-        ("A2", "LR.NO", "B2", d['lr_no'], "C2", "Loading Date", "D2", d['loading_date'], "E2", "Date", "F2", d['date_val']),
+        ("A2", "LR.NO", "B2", d['lr_no'], "C2", "DI NO", "D2", d.get('di_no', ''), "E2", "Date", "F2", d['date_val']),
         ("A3", "From", "B3", d['from_loc'], "C3", "To", "D3", d['to_loc'], "E3", "Truck No", "F3", d['truck_no']),
         ("A4", "Rate (per Ton)", "B4", d['rate_ton'], "C4", "Freight", "D4", "=B4*F4", "E4", "Weight (Tons)", "F4", d['weight_ton']),
-        ("A5", "Bill No", "B5", d['bill_no'], "C5", "Grade", "D5", d.get('material_grade', 'PPC'), "E5", "Party Name", "F5", d['party_name'])
+        ("A5", "Bolt/Seal No", "B5", d.get('bolt_seal_no', ''), "C5", "Grade", "D5", d.get('material_grade', 'PPC'), "E5", "Party Name", "F5", d['party_name'])
     ]
     
     for row in headers_meta:
@@ -401,10 +419,10 @@ def generate_trip_sheet_pdf(d):
 
     table_data = [
         ["R. R. LOGISTICS, DHULE - TRIP SHEET", "", "", "", "", "", "", ""],
-        ["LR.NO", str(d['lr_no']), "Loading Date", str(d['loading_date']), "Date", str(d['date_val']), "", ""],
+        ["LR.NO", str(d['lr_no']), "DI NO", str(d.get('di_no', '')), "Date", str(d['date_val']), "", ""],
         ["From", str(d['from_loc']), "To", str(d['to_loc']), "Truck No", str(d['truck_no']), "", ""],
         ["Rate (per Ton)", str(d['rate_ton']), "Freight", str(freight_val), "Weight (Tons)", str(d['weight_ton']), "", ""],
-        ["Bill No", str(d['bill_no']), "Grade", str(d.get('material_grade', 'PPC')), "Party Name", str(d['party_name']), "", ""],
+        ["Bolt/Seal No", str(d.get('bolt_seal_no', '')), "Grade", str(d.get('material_grade', 'PPC')), "Party Name", str(d['party_name']), "", ""],
         ["EXP", "Ltr", "Rate", "Amount", "Date", "Pump", "Summary", "Values"],
         ["Trip Adv", "", "", str(d['trip_adv']), str(d['adv_date']), "", "Start Km", str(d['start_km'])],
         ["Unloading", "", "", str(d['unloading']), "", "", "End Km", str(d['end_km'])],
@@ -522,7 +540,6 @@ def main():
     st.markdown("<p style='text-align: center; color: #475569;'><b>TRANSPORT CONTRACTOR & COMMISSION AGENT</b> | Dhule Jurisdiction</p>", unsafe_allow_html=True)
     st.markdown("---")
     
-    # कायमस्वरूपी डेटाबेस पासवर्ड आणणे
     stored_password = get_setting("admin_password", "rr123")
     stored_security_pin = get_setting("security_pin", "9822")
 
@@ -550,7 +567,7 @@ def main():
             if recovery_code == stored_security_pin:
                 if new_pass and new_pass == confirm_pass:
                     set_setting("admin_password", new_pass)
-                    st.success("नवीन पासवर्ड डेटाबेसमध्ये कायमस्वरूपी सेव्ह झाला! ✅ आता नवीन पासवर्डने लॉगिन करा.")
+                    st.success("नवीन पासवर्ड सेव्ह झाला! ✅")
                 else:
                     st.error("दोन्ही पासवर्ड जुळत नाहीत किंवा रिकामे आहेत!")
             else:
@@ -558,7 +575,6 @@ def main():
 
     if st.session_state.logged_in:
         st.sidebar.markdown("---")
-        # मेनू ४ (Diesel) काढून उर्वरित ५ सुलभ मेन्यू ठेवले आहेत
         menu = st.sidebar.radio("मेन्यू निवडा:", [
             "१. Vehicle Registration & Records", 
             "२. Driver Registration & Records", 
@@ -571,7 +587,7 @@ def main():
         all_drivers = fetch_driver_list()
         driver_options = {d[0]: f"{d[1]} ({d[0]})" for d in all_drivers}
 
-        # --- MENU 1: VEHICLE & EXPIRY DATES ---
+        # --- MENU 1: VEHICLE REGISTRATION ---
         if menu == "१. Vehicle Registration & Records":
             st.subheader("🚛 गाडी नोंदणी, माहिती संपादन व डॉक्युमेंट्स")
             
@@ -696,7 +712,7 @@ def main():
                 else:
                     st.warning("कृपया ड्रायव्हरचे नाव व लायसन्स नंबर प्रविष्ट करा!")
 
-        # --- MENU 3: TRIP INFO & AUTO LR GENERATION ---
+        # --- MENU 3: TRIP INFO & AUTO LR GENERATION (WITH DI & BOLT/SEAL NO.) ---
         elif menu == "३. Trip Information & Auto LR Generation":
             st.subheader("📄 ट्रिप माहिती आणि LR (Bilty) निर्मिती")
             st.info("⚡ गाडी निवडताच ड्रायव्हर, वजन आणि मागील ट्रिपचे सर्व तपशील आपोआप लोड होतील.")
@@ -706,7 +722,7 @@ def main():
             # मागील ट्रिपचा डेटा लोड करणे
             conn = get_db_connection()
             c = conn.cursor()
-            c.execute("SELECT from_loc, to_loc, rate_ton, weight_ton, party_name, material_grade FROM trip_sheets WHERE truck_no=? ORDER BY rowid DESC LIMIT 1", (sel_truck,))
+            c.execute("SELECT from_loc, to_loc, rate_ton, weight_ton, party_name, material_grade, di_no, bolt_seal_no FROM trip_sheets WHERE truck_no=? ORDER BY rowid DESC LIMIT 1", (sel_truck,))
             last_trip = c.fetchone()
             conn.close()
             
@@ -719,9 +735,17 @@ def main():
                     d_auto_name = d_info[1]
                     d_auto_mob = d_info[2]
 
+            # LR Number, DI Number आणि Bolt Seal Number
+            col_lr1, col_lr2, col_lr3 = st.columns(3)
+            with col_lr1:
+                lr_no = st.text_input("L.R. No. (एल.आर. नंबर)", value="1602/1603")
+            with col_lr2:
+                di_no = st.text_input("DI No. (डिस्पॅच सूचना क्र. / DI No.)", value=last_trip[6] if (last_trip and len(last_trip) > 6 and last_trip[6]) else "DI-99882")
+            with col_lr3:
+                bolt_no = st.text_input("Bolt / Seal No. (बोल्ट सील क्रमांक)", value=last_trip[7] if (last_trip and len(last_trip) > 7 and last_trip[7]) else "BT-4455")
+
             col1, col2, col3 = st.columns(3)
             with col1:
-                lr_no = st.text_input("L.R. No.", value="1602/1603")
                 from_loc = st.text_input("From (कुठून)", value=last_trip[0] if last_trip else "WONDER")
                 consignor = st.text_area("Consignor", value="Ultratech Cement Depo, Sarwad")
                 d_name = st.text_input("Driver Name", value=d_auto_name if d_auto_name else "Ramesh Pawar")
@@ -741,7 +765,6 @@ def main():
             with col_ex1:
                 weight = st.text_input("Weight (वजन टनांमध्ये)", value=str(last_trip[3]) if last_trip else (v_data[3] if v_data and v_data[3] else "42"))
             with col_ex2:
-                # सिमेंट / मटेरियल ग्रेड ड्रॉपडाऊन
                 grade_list = ["PPC", "Super", "OPC 43", "OPC 53", "PSC", "Composite", "Loose / Bulk"]
                 default_grade_idx = 0
                 if last_trip and len(last_trip) > 5 and last_trip[5] in grade_list:
@@ -756,7 +779,7 @@ def main():
 
             if st.button("LR PDF तयार करा"):
                 if lr_no:
-                    pdf_file_path = generate_official_lr(lr_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade)
+                    pdf_file_path = generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade)
                     st.success("अधिकृत LR PDF तयार झाली आहे! 👇")
                     with open(pdf_file_path, "rb") as f:
                         st.download_button(
@@ -777,13 +800,21 @@ def main():
             
             conn = get_db_connection()
             c = conn.cursor()
-            c.execute("SELECT from_loc, to_loc, rate_ton, weight_ton, party_name, end_km, material_grade FROM trip_sheets WHERE truck_no=? ORDER BY rowid DESC LIMIT 1", (truck_choice,))
+            c.execute("SELECT from_loc, to_loc, rate_ton, weight_ton, party_name, end_km, material_grade, di_no, bolt_seal_no FROM trip_sheets WHERE truck_no=? ORDER BY rowid DESC LIMIT 1", (truck_choice,))
             last_ts = c.fetchone()
             conn.close()
 
+            # L.R., DI आणि Bolt No.
+            col_ts_top1, col_ts_top2, col_ts_top3 = st.columns(3)
+            with col_ts_top1:
+                ts_lr = st.text_input("LR.NO", value="1602/1603")
+            with col_ts_top2:
+                ts_di = st.text_input("DI No.", value=last_ts[7] if (last_ts and len(last_ts) > 7 and last_ts[7]) else "DI-99882")
+            with col_ts_top3:
+                ts_bolt = st.text_input("Bolt / Seal No.", value=last_ts[8] if (last_ts and len(last_ts) > 8 and last_ts[8]) else "BT-4455")
+
             t1, t2, t3, t4 = st.columns(4)
             with t1:
-                ts_lr = st.text_input("LR.NO", value="1602/1603")
                 ts_from = st.text_input("From", value=last_ts[0] if last_ts else "WONDER")
                 ts_rate = st.number_input("Rate (per Ton)", min_value=0.0, value=float(last_ts[2]) if last_ts else 539.0, step=1.0)
                 ts_bill = st.text_input("Bill No", value="")
@@ -791,20 +822,20 @@ def main():
                 ts_ldate = st.text_input("Loading Date", value=datetime.now().strftime("%d-%m-%Y"))
                 ts_to = st.text_input("To", value=last_ts[1] if last_ts else "MALEGAON")
                 ts_weight = st.number_input("Weight (Tons)", min_value=0.0, value=float(last_ts[3]) if last_ts else 42.0, step=0.5)
+            with t3:
+                ts_date = st.text_input("Date", value=datetime.now().strftime("%d-%m-%Y"))
+                ts_truck = st.text_input("Truck No", value=truck_choice)
                 grade_options = ["PPC", "Super", "OPC 43", "OPC 53", "PSC", "Composite", "Loose / Bulk"]
                 default_g_idx = 0
                 if last_ts and len(last_ts) > 6 and last_ts[6] in grade_options:
                     default_g_idx = grade_options.index(last_ts[6])
                 ts_grade = st.selectbox("Material / Grade", grade_options, index=default_g_idx)
-            with t3:
-                ts_date = st.text_input("Date", value=datetime.now().strftime("%d-%m-%Y"))
-                ts_truck = st.text_input("Truck No", value=truck_choice)
-                calc_freight = round(ts_rate * ts_weight, 2)
-                st.metric("Freight (भाडे फॉर्म्युला)", f"₹ {calc_freight:,.2f}")
-                ts_party = st.text_input("Party Name", value=last_ts[4] if last_ts else "DEPO")
             with t4:
+                calc_freight = round(ts_rate * ts_weight, 2)
+                st.metric("Freight (भाडे रक्कम)", f"₹ {calc_freight:,.2f}")
+                ts_party = st.text_input("Party Name", value=last_ts[4] if last_ts else "DEPO")
                 last_end_km = last_ts[5] if last_ts and last_ts[5] else 0
-                ts_start_km = st.number_input("Start Km (मागील ट्रिपचा End Km)", min_value=0, value=last_end_km)
+                ts_start_km = st.number_input("Start Km", min_value=0, value=last_end_km)
                 ts_end_km = st.number_input("End Km", min_value=0, value=last_end_km + 250)
                 calc_run_km = ts_end_km - ts_start_km
                 st.metric("Running Km", f"{calc_run_km} KM")
@@ -857,7 +888,8 @@ def main():
             s4.metric("सरासरी (Average)", f"{avg_km} Km/L")
 
             ts_dict = {
-                'lr_no': ts_lr, 'loading_date': ts_ldate, 'date_val': ts_date,
+                'lr_no': ts_lr, 'di_no': ts_di, 'bolt_seal_no': ts_bolt,
+                'loading_date': ts_ldate, 'date_val': ts_date,
                 'from_loc': ts_from, 'to_loc': ts_to, 'truck_no': ts_truck,
                 'rate_ton': ts_rate, 'weight_ton': ts_weight,
                 'bill_no': ts_bill, 'otp': "", 'party_name': ts_party,
@@ -874,9 +906,14 @@ def main():
             if st.button("💾 ही ट्रिप शीट डेटाबेसमध्ये कायमस्वरूपी सेव्ह करा"):
                 conn = get_db_connection()
                 c = conn.cursor()
-                c.execute('''INSERT OR REPLACE INTO trip_sheets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                c.execute('''INSERT OR REPLACE INTO trip_sheets (
+                                lr_no, loading_date, date_val, from_loc, to_loc, truck_no, driver_dl, driver_name, driver_mob,
+                                rate_ton, weight_ton, freight, bill_no, otp, party_name, material_grade, di_no, bolt_seal_no,
+                                start_km, end_km, running_km, trip_adv, unloading, food, tyre_bill, fastag1, fastag2,
+                                diesel_ltr, diesel_amt, commission, maintenance, other_exp, total_exp, trip_balance, created_at
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                           (ts_lr, ts_ldate, ts_date, ts_from, ts_to, ts_truck, "", "", "", ts_rate, ts_weight, calc_freight,
-                           ts_bill, "", ts_party, ts_grade, ts_start_km, ts_end_km, calc_run_km, exp_adv, exp_unloading,
+                           ts_bill, "", ts_party, ts_grade, ts_di, ts_bolt, ts_start_km, ts_end_km, calc_run_km, exp_adv, exp_unloading,
                            exp_food, exp_tyre, exp_ft1, exp_ft2, tot_diesel_ltr, (d1_amt+d2_amt), exp_comm, exp_maint,
                            exp_other, tot_exp, trip_bal, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                 conn.commit()
@@ -958,7 +995,7 @@ def main():
 
             with tab2:
                 st.markdown("#### 📑 सेव्ह केलेल्या सर्व ट्रिप शीट्स")
-                t_df = pd.read_sql_query("SELECT lr_no, date_val, truck_no, from_loc, to_loc, material_grade, freight, total_exp, trip_balance, created_at FROM trip_sheets", conn)
+                t_df = pd.read_sql_query("SELECT lr_no, di_no, bolt_seal_no, date_val, truck_no, from_loc, to_loc, material_grade, freight, total_exp, trip_balance, created_at FROM trip_sheets", conn)
                 if not t_df.empty:
                     st.dataframe(t_df, use_container_width=True)
                 else:
