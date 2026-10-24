@@ -3,8 +3,23 @@ import pandas as pd
 from datetime import datetime, timedelta
 import os
 import io
+import re
 import tempfile
 import sqlite3
+
+# PDF & Image Reading / Parsing
+try:
+    import pdfplumber
+    HAS_PDFPLUMBER = True
+except ImportError:
+    HAS_PDFPLUMBER = False
+
+from PIL import Image
+try:
+    import pytesseract
+    HAS_PYTESSERACT = True
+except ImportError:
+    HAS_PYTESSERACT = False
 
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
@@ -31,7 +46,7 @@ def init_db():
     conn = sqlite3.connect("rr_logistics.db")
     c = conn.cursor()
     
-    # ॲप सेटिंग्ज आणि पासवर्ड कायमस्वरूपी सेव्ह ठेवण्यासाठी
+    # ॲप सेटिंग्ज
     c.execute('''CREATE TABLE IF NOT EXISTS app_settings (
                     key_name TEXT PRIMARY KEY,
                     key_value TEXT
@@ -110,24 +125,15 @@ def init_db():
                     created_at TEXT
                 )''')
 
-    # सुरक्षित Schema Migration - जुना डेटा डिलीट न होता नवीन कॉलम्स जोडणे
+    # Schema Migration
     c.execute("PRAGMA table_info(trip_sheets)")
     existing_cols = [col[1] for col in c.fetchall()]
-    if "di_no" not in existing_cols:
-        try:
-            c.execute("ALTER TABLE trip_sheets ADD COLUMN di_no TEXT DEFAULT ''")
-        except:
-            pass
-    if "bolt_seal_no" not in existing_cols:
-        try:
-            c.execute("ALTER TABLE trip_sheets ADD COLUMN bolt_seal_no TEXT DEFAULT ''")
-        except:
-            pass
-    if "material_grade" not in existing_cols:
-        try:
-            c.execute("ALTER TABLE trip_sheets ADD COLUMN material_grade TEXT DEFAULT 'PPC'")
-        except:
-            pass
+    for col_name, col_type in [("di_no", "TEXT DEFAULT ''"), ("bolt_seal_no", "TEXT DEFAULT ''"), ("material_grade", "TEXT DEFAULT 'PPC'")]:
+        if col_name not in existing_cols:
+            try:
+                c.execute(f"ALTER TABLE trip_sheets ADD COLUMN {col_name} {col_type}")
+            except:
+                pass
 
     conn.commit()
     conn.close()
@@ -191,6 +197,88 @@ def save_uploaded_file(uploaded_file, prefix, existing_path=""):
     with open(file_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
     return file_path
+
+# ==========================================
+# PARSER: ULTRATECH DOCUMENT EXTRACTOR
+# ==========================================
+def extract_text_from_doc(file_obj):
+    extracted_text = ""
+    file_name = file_obj.name.lower()
+    
+    if file_name.endswith('.pdf'):
+        if HAS_PDFPLUMBER:
+            with pdfplumber.open(file_obj) as pdf:
+                for page in pdf.pages:
+                    txt = page.extract_text()
+                    if txt:
+                        extracted_text += txt + "\n"
+        else:
+            st.error("कृपया 'pdfplumber' इन्स्टॉल करा: pip install pdfplumber")
+    elif file_name.endswith(('.jpg', '.jpeg', '.png')):
+        if HAS_PYTESSERACT:
+            image = Image.open(file_obj)
+            extracted_text = pytesseract.image_to_string(image)
+        else:
+            st.warning("इमेज वाचण्यासाठी Tesseract उपलब्ध नाही. कृपया थेट PDF अपलोड करा किंवा Tesseract कॉन्फिगर करा.")
+            
+    return extracted_text
+
+def parse_ultratech_content(text):
+    data = {}
+    if not text:
+        return data
+
+    # 1. DI No. / Dispatch Instruction
+    di_match = re.search(r'(?:DI\s*(?:NO|Number)?[:\s\.-]+|DISPATCH\s*NO[:\s\.-]+)([A-Za-z0-9\/-]+)', text, re.IGNORECASE)
+    if di_match:
+        data['di_no'] = di_match.group(1).strip()
+
+    # 2. Vehicle No. / Truck No.
+    truck_match = re.search(r'([A-Z]{2}[-\s]?[0-9]{1,2}[-\s]?[A-Z]{1,3}[-\s]?[0-9]{4})', text)
+    if truck_match:
+        clean_truck = truck_match.group(1).replace(" ", "").replace("-", "")
+        data['truck_no'] = clean_truck
+
+    # 3. Bolt / Seal No.
+    seal_match = re.search(r'(?:SEAL|BOLT|LOCK)\s*(?:NO)?[:\s\.-]+([A-Za-z0-9]+)', text, re.IGNORECASE)
+    if seal_match:
+        data['bolt_no'] = seal_match.group(1).strip()
+
+    # 4. Weight in MT / Quantity
+    weight_match = re.search(r'(?:NET\s*WT|WEIGHT|QTY|QUANTITY)[\s:\.-]+([0-9]+\.?[0-9]*)\s*(?:MT|TONS|TON)?', text, re.IGNORECASE)
+    if weight_match:
+        try:
+            data['weight'] = str(float(weight_match.group(1)))
+        except:
+            pass
+
+    # 5. E-Way Bill No.
+    eway_match = re.search(r'(?:E[\s-]?WAY|EWB)\s*(?:BILL)?\s*(?:NO)?[:\s\.-]+([0-9]{12})', text, re.IGNORECASE)
+    if eway_match:
+        data['c_eway'] = eway_match.group(1).strip()
+
+    # 6. GSTIN
+    gst_match = re.search(r'([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})', text)
+    if gst_match:
+        data['c_gst'] = gst_match.group(1).strip()
+
+    # 7. Material / Grade
+    for grade in ["PPC", "OPC 43", "OPC 53", "SUPER", "COMPOSITE", "PSC"]:
+        if re.search(rf'\b{grade}\b', text, re.IGNORECASE):
+            data['mat_grade'] = grade
+            break
+
+    # 8. Date
+    date_match = re.search(r'([0-3]?[0-9][\/\.-][0-1]?[0-9][\/\.-]20[2-9][0-9])', text)
+    if date_match:
+        data['date_val'] = date_match.group(1).replace('/', '-')
+
+    # 9. Destination / To
+    to_match = re.search(r'(?:DESTINATION|TO|CONSIGNEE\s*CITY)[:\s\.-]+([A-Za-z]+)', text, re.IGNORECASE)
+    if to_match:
+        data['to_loc'] = to_match.group(1).strip().upper()
+
+    return data
 
 # ==========================================
 # 1. LR PDF GENERATION FUNCTION
@@ -708,12 +796,34 @@ def main():
                 else:
                     st.warning("कृपया ड्रायव्हरचे नाव व लायसन्स नंबर प्रविष्ट करा!")
 
-        # --- MENU 3: TRIP INFO & AUTO LR GENERATION ---
+        # --- MENU 3: TRIP INFO & AUTO LR GENERATION (WITH ULTRATECH SCANNER) ---
         elif menu == "३. Trip Information & Auto LR Generation":
             st.subheader("📄 ट्रिप माहिती आणि LR (Bilty) निर्मिती")
-            st.info("⚡ गाडी निवडताच ड्रायव्हर, वजन आणि मागील ट्रिपचे सर्व तपशील आपोआप लोड होतील.")
 
-            sel_truck = st.selectbox("गाडी क्रमांक निवडा:", existing_vehicles if existing_vehicles else ["MH18BZ2240"], key="lr_veh_sel")
+            # --- नवीन फिचर: अल्ट्राटेक डॉक्युमेंट अपलोड व ऑटो-स्कॅन ---
+            st.markdown("### ⚡ अल्ट्राटेक सिस्टीम LR / इनव्हॉइस अपलोड करा (Auto Scan)")
+            with st.expander("📥 अल्ट्राटेक PDF किंवा फोटो अपलोड करून फॉर्म आपोआप भरा", expanded=True):
+                utcl_doc = st.file_uploader("Ultratech Bilty / Invoice ची PDF किंवा इमेज निवडा:", type=["pdf", "png", "jpg", "jpeg"], key="utcl_scanner")
+                if utcl_doc is not None:
+                    if st.button("🔍 डॉक्युमेंट स्कॅन करून फॉर्म भरा"):
+                        with st.spinner("डॉक्युमेंटमधून माहिती काढली जात आहे..."):
+                            extracted_txt = extract_text_from_doc(utcl_doc)
+                            parsed_vals = parse_ultratech_content(extracted_txt)
+                            if parsed_vals:
+                                st.session_state['auto_utcl'] = parsed_vals
+                                st.success("✅ डॉक्युमेंट यशस्वीरीत्या स्कॅन झाले! खालील फॉर्ममध्ये तपशील भरले गेले आहेत.")
+                            else:
+                                st.error("डॉक्युमेंटमधून माहिती वाचता आली नाही. कृपया स्पष्ट PDF किंवा फोटो अपलोड करा.")
+
+            auto_data = st.session_state.get('auto_utcl', {})
+
+            # गाडी निवडणे
+            default_truck = auto_data.get('truck_no', '')
+            truck_list = existing_vehicles if existing_vehicles else ["MH18BZ2240"]
+            if default_truck and default_truck not in truck_list:
+                truck_list = [default_truck] + truck_list
+
+            sel_truck = st.selectbox("गाडी क्रमांक निवडा:", truck_list, key="lr_veh_sel")
             
             conn = get_db_connection()
             c = conn.cursor()
@@ -734,44 +844,57 @@ def main():
             with col_lr1:
                 lr_no = st.text_input("L.R. No. (एल.आर. नंबर)", value="1602/1603")
             with col_lr2:
-                di_no = st.text_input("DI No. (डिस्पॅच सूचना क्र. / DI No.)", value=last_trip[6] if (last_trip and len(last_trip) > 6 and last_trip[6]) else "DI-99882")
+                default_di = auto_data.get('di_no', last_trip[6] if (last_trip and len(last_trip) > 6 and last_trip[6]) else "DI-99882")
+                di_no = st.text_input("DI No. (डिस्पॅच सूचना क्र. / DI No.)", value=default_di)
             with col_lr3:
-                bolt_no = st.text_input("Bolt / Seal No. (बोल्ट सील क्रमांक)", value=last_trip[7] if (last_trip and len(last_trip) > 7 and last_trip[7]) else "BT-4455")
+                default_bolt = auto_data.get('bolt_no', last_trip[7] if (last_trip and len(last_trip) > 7 and last_trip[7]) else "BT-4455")
+                bolt_no = st.text_input("Bolt / Seal No. (बोल्ट सील क्रमांक)", value=default_bolt)
 
             col1, col2, col3 = st.columns(3)
             with col1:
-                from_loc = st.text_input("From (कुठून)", value=last_trip[0] if last_trip else "WONDER")
-                consignor = st.text_area("Consignor", value="Ultratech Cement Depo, Sarwad")
+                from_loc = st.text_input("From (कुठून)", value="ULTRATECH CEMENT LTD, DHULE")
+                consignor = st.text_area("Consignor", value="Ultratech Cement Depo, Sarwad, Dhule")
                 d_name = st.text_input("Driver Name", value=d_auto_name if d_auto_name else "Ramesh Pawar")
             with col2:
                 truck_no = st.text_input("Truck No.", value=sel_truck)
-                to_loc = st.text_input("To (कुठे)", value=last_trip[1] if last_trip else "MALEGAON")
-                consignee = st.text_area("Consignee", value="Self / Party Warehouse, Malegaon")
+                default_to = auto_data.get('to_loc', last_trip[1] if last_trip else "MALEGAON")
+                to_loc = st.text_input("To (कुठे)", value=default_to)
+                consignee = st.text_area("Consignee", value="Ultratech Authorised Dealer / Party Warehouse")
                 d_dl = st.text_input("D.L. No.", value=d_auto_dl if d_auto_dl else "MH1820120004567")
             with col3:
-                date_val = st.text_input("Date", value=datetime.now().strftime("%d-%m-%Y"))
-                c_gst = st.text_input("Consignor GSTIN", value="27AABCU1234F1Z5")
-                c_eway = st.text_input("E-way Bill No.", value="EW-889923410")
+                default_dt = auto_data.get('date_val', datetime.now().strftime("%d-%m-%Y"))
+                date_val = st.text_input("Date", value=default_dt)
+                default_gst = auto_data.get('c_gst', "27AABCU1234F1Z5")
+                c_gst = st.text_input("Consignor GSTIN", value=default_gst)
+                default_ewb = auto_data.get('c_eway', "EW-889923410")
+                c_eway = st.text_input("E-way Bill No.", value=default_ewb)
                 d_mobile = st.text_input("Driver Mobile No.", value=d_auto_mob if d_auto_mob else "9823000000")
             
             st.markdown("---")
             col_ex1, col_ex2, col_ex3, col_ex4 = st.columns(4)
             with col_ex1:
-                weight = st.text_input("Weight (वजन टनांमध्ये)", value=str(last_trip[3]) if last_trip else (v_data[3] if v_data and v_data[3] else "42"))
+                default_wt = auto_data.get('weight', str(last_trip[3]) if last_trip else (v_data[3] if v_data and v_data[3] else "42.0"))
+                weight = st.text_input("Weight (वजन टनांमध्ये)", value=default_wt)
             with col_ex2:
                 grade_list = ["PPC", "Super", "OPC 43", "OPC 53", "PSC", "Composite", "Loose / Bulk"]
+                detected_grade = auto_data.get('mat_grade', last_trip[5] if (last_trip and len(last_trip) > 5) else "PPC")
                 default_grade_idx = 0
-                if last_trip and len(last_trip) > 5 and last_trip[5] in grade_list:
-                    default_grade_idx = grade_list.index(last_trip[5])
+                for idx, g in enumerate(grade_list):
+                    if g.upper() == detected_grade.upper():
+                        default_grade_idx = idx
+                        break
                 mat_grade = st.selectbox("मटेरियल / ग्रेड निवडा (Material Grade):", grade_list, index=default_grade_idx)
             with col_ex3:
                 rate_val = last_trip[2] if last_trip else 539.0
-                calc_f = float(weight) * float(rate_val) if weight else 0.0
+                try:
+                    calc_f = float(weight) * float(rate_val)
+                except:
+                    calc_f = 0.0
                 freight = st.text_input("एकूण भाडे (Freight ₹)", value=str(round(calc_f, 2)))
             with col_ex4:
-                order_by = st.text_input("Order By", value=last_trip[4] if last_trip else "DEPO")
+                order_by = st.text_input("Order By", value=last_trip[4] if last_trip else "ULTRATECH")
 
-            if st.button("LR PDF तयार करा"):
+            if st.button("🚀 LR PDF तयार करा"):
                 if lr_no:
                     pdf_file_path = generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade)
                     st.success("अधिकृत LR PDF तयार झाली आहे! 👇")
@@ -808,7 +931,7 @@ def main():
 
             t1, t2, t3, t4 = st.columns(4)
             with t1:
-                ts_from = st.text_input("From", value=last_ts[0] if last_ts else "WONDER")
+                ts_from = st.text_input("From", value=last_ts[0] if last_ts else "ULTRATECH")
                 ts_rate = st.number_input("Rate (per Ton)", min_value=0.0, value=float(last_ts[2]) if last_ts else 539.0, step=1.0)
                 ts_bill = st.text_input("Bill No", value="")
             with t2:
