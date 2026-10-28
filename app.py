@@ -21,8 +21,8 @@ try:
 except ImportError:
     HAS_PYTESSERACT = False
 
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.lib.pagesizes import letter, portrait, landscape
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, HRFlowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
@@ -46,7 +46,7 @@ def init_db():
     conn = sqlite3.connect("rr_logistics.db")
     c = conn.cursor()
     
-    # ॲप सेटिंग्ज
+    # App Settings
     c.execute('''CREATE TABLE IF NOT EXISTS app_settings (
                     key_name TEXT PRIMARY KEY,
                     key_value TEXT
@@ -54,7 +54,7 @@ def init_db():
     c.execute("INSERT OR IGNORE INTO app_settings VALUES ('admin_password', 'rr123')")
     c.execute("INSERT OR IGNORE INTO app_settings VALUES ('security_pin', '9822')")
 
-    # वाहनांचे टेबल
+    # Vehicles Table
     c.execute('''CREATE TABLE IF NOT EXISTS vehicles (
                     veh_no TEXT PRIMARY KEY,
                     owner_name TEXT,
@@ -73,7 +73,7 @@ def init_db():
                     created_at TEXT
                 )''')
 
-    # ड्रायव्हर्स टेबल
+    # Drivers Table
     c.execute('''CREATE TABLE IF NOT EXISTS drivers (
                     dl_no TEXT PRIMARY KEY,
                     driver_name TEXT,
@@ -88,7 +88,7 @@ def init_db():
                     created_at TEXT
                 )''')
 
-    # ट्रिप शीट्स टेबल
+    # Trip Sheets Table (Bolt/Seal No. deleted)
     c.execute('''CREATE TABLE IF NOT EXISTS trip_sheets (
                     lr_no TEXT PRIMARY KEY,
                     loading_date TEXT,
@@ -128,7 +128,7 @@ def init_db():
     # Schema Migration
     c.execute("PRAGMA table_info(trip_sheets)")
     existing_cols = [col[1] for col in c.fetchall()]
-    for col_name, col_type in [("di_no", "TEXT DEFAULT ''"), ("bolt_seal_no", "TEXT DEFAULT ''"), ("material_grade", "TEXT DEFAULT 'PPC'")]:
+    for col_name, col_type in [("di_no", "TEXT DEFAULT ''"), ("material_grade", "TEXT DEFAULT 'PPC'")]:
         if col_name not in existing_cols:
             try:
                 c.execute(f"ALTER TABLE trip_sheets ADD COLUMN {col_name} {col_type}")
@@ -213,13 +213,13 @@ def extract_text_from_doc(file_obj):
                     if txt:
                         extracted_text += txt + "\n"
         else:
-            st.error("कृपया 'pdfplumber' इन्स्टॉल करा: pip install pdfplumber")
+            st.error("Krupaya 'pdfplumber' install kara: pip install pdfplumber")
     elif file_name.endswith(('.jpg', '.jpeg', '.png')):
         if HAS_PYTESSERACT:
             image = Image.open(file_obj)
             extracted_text = pytesseract.image_to_string(image)
         else:
-            st.warning("इमेज वाचण्यासाठी Tesseract उपलब्ध नाही. कृपया थेट PDF अपलोड करा किंवा Tesseract कॉन्फिगर करा.")
+            st.warning("Image vachanyasathi Tesseract uplabdh nahi. Direct PDF upload kara.")
             
     return extracted_text
 
@@ -228,8 +228,10 @@ def parse_ultratech_content(text):
     if not text:
         return data
 
-    # 1. DI No. / Dispatch Instruction
-    di_match = re.search(r'(?:DI\s*(?:NO|Number)?[:\s\.-]+|DISPATCH\s*NO[:\s\.-]+)([A-Za-z0-9\/-]+)', text, re.IGNORECASE)
+    # 1. DI No.
+    di_match = re.search(r'(?:DI\s*(?:NO|Number)?[:\s\.-]+|DISPATCH\s*NO[:\s\.-]+|DI\s*#?\s*)([0-9]{8,12})', text, re.IGNORECASE)
+    if not di_match:
+        di_match = re.search(r'\b(69[0-9]{8})\b', text)
     if di_match:
         data['di_no'] = di_match.group(1).strip()
 
@@ -239,126 +241,163 @@ def parse_ultratech_content(text):
         clean_truck = truck_match.group(1).replace(" ", "").replace("-", "")
         data['truck_no'] = clean_truck
 
-    # 3. Bolt / Seal No.
-    seal_match = re.search(r'(?:SEAL|BOLT|LOCK)\s*(?:NO)?[:\s\.-]+([A-Za-z0-9]+)', text, re.IGNORECASE)
-    if seal_match:
-        data['bolt_no'] = seal_match.group(1).strip()
-
-    # 4. Weight in MT / Quantity
+    # 3. Weight in MT / Quantity
     weight_match = re.search(r'(?:NET\s*WT|WEIGHT|QTY|QUANTITY)[\s:\.-]+([0-9]+\.?[0-9]*)\s*(?:MT|TONS|TON)?', text, re.IGNORECASE)
     if weight_match:
         try:
             data['weight'] = str(float(weight_match.group(1)))
         except:
-            pass
+            data['weight'] = "As per slip"
+    else:
+        data['weight'] = "As per slip"
 
-    # 5. E-Way Bill No.
+    # 4. E-Way Bill No.
     eway_match = re.search(r'(?:E[\s-]?WAY|EWB)\s*(?:BILL)?\s*(?:NO)?[:\s\.-]+([0-9]{12})', text, re.IGNORECASE)
     if eway_match:
         data['c_eway'] = eway_match.group(1).strip()
+    else:
+        data['c_eway'] = "-"
 
-    # 6. GSTIN
+    # 5. GSTIN
     gst_match = re.search(r'([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})', text)
     if gst_match:
         data['c_gst'] = gst_match.group(1).strip()
+    else:
+        data['c_gst'] = "-"
 
-    # 7. Material / Grade
+    # 6. Material / Grade
     for grade in ["PPC", "OPC 43", "OPC 53", "SUPER", "COMPOSITE", "PSC"]:
         if re.search(rf'\b{grade}\b', text, re.IGNORECASE):
-            data['mat_grade'] = grade
+            data['mat_grade'] = f"{grade}/ULTRATECH CEMENT"
             break
+    if 'mat_grade' not in data:
+        data['mat_grade'] = "PPC/ULTRATECH CEMENT"
 
-    # 8. Date
+    # 7. Date
     date_match = re.search(r'([0-3]?[0-9][\/\.-][0-1]?[0-9][\/\.-]20[2-9][0-9])', text)
     if date_match:
-        data['date_val'] = date_match.group(1).replace('/', '-')
+        data['date_val'] = date_match.group(1).replace('/', '.')
+    else:
+        data['date_val'] = datetime.now().strftime("%d.%m.%Y")
 
-    # 9. Destination / To
-    to_match = re.search(r'(?:DESTINATION|TO|CONSIGNEE\s*CITY)[:\s\.-]+([A-Za-z]+)', text, re.IGNORECASE)
-    if to_match:
-        data['to_loc'] = to_match.group(1).strip().upper()
+    # 8. Destination / Consignee Location
+    dest_match = re.search(r'(?:DESTINATION|TO|CONSIGNEE\s*CITY|SHIP\s*TO)[:\s\.-]+([A-Za-z\s]+)', text, re.IGNORECASE)
+    if dest_match:
+        data['to_loc'] = dest_match.group(1).strip().split('\n')[0].upper()
 
     return data
 
 # ==========================================
-# 1. LR PDF GENERATION FUNCTION
+# 1. LR PDF GENERATION (CONSIGNEE & DRIVER COPY - WITHOUT BOLT/SEAL NO)
 # ==========================================
-def generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade):
-    temp_dir = tempfile.gettempdir()
-    safe_lr = str(lr_no).replace('/', '_')
-    pdf_path = os.path.join(temp_dir, f"LR_{safe_lr}.pdf")
-    
-    doc = SimpleDocTemplate(pdf_path, pagesize=letter, rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
-    story = []
+def build_single_bilty_content(copy_title, lr_no, di_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade, remarks):
     styles = getSampleStyleSheet()
     
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=15, textColor=colors.HexColor('#1e3a8a'), alignment=1, spaceAfter=2)
-    sub_style = ParagraphStyle('SubStyle', parent=styles['Normal'], fontSize=8.5, textColor=colors.HexColor('#1e3a8a'), alignment=1, spaceAfter=2)
-    addr_style = ParagraphStyle('AddrStyle', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#334155'), alignment=1, spaceAfter=8)
+    top_small = ParagraphStyle('TopSub', parent=styles['Normal'], fontSize=6, leading=7, textColor=colors.HexColor('#334155'), alignment=1)
+    main_title = ParagraphStyle('MTitle', parent=styles['Heading1'], fontSize=11, leading=12, textColor=colors.HexColor('#103A70'), alignment=1, spaceAfter=1)
+    sub_title = ParagraphStyle('SubTitle', parent=styles['Normal'], fontSize=6.5, leading=8, textColor=colors.HexColor('#103A70'), alignment=1)
+    addr_style = ParagraphStyle('AddrStyle', parent=styles['Normal'], fontSize=6, leading=7, textColor=colors.HexColor('#334155'), alignment=1)
+    badge_style = ParagraphStyle('BadgeStyle', parent=styles['Normal'], fontSize=7.5, leading=9, textColor=colors.HexColor('#991B1B'), alignment=1)
     
-    for l_file in ["logo.jpeg", "logo.jpg", "logo.png"]:
-        if os.path.exists(l_file):
-            img = RLImage(l_file, width=80, height=55)
-            img.hAlign = 'CENTER'
-            story.append(img)
-            story.append(Spacer(1, 4))
-            break
+    cell_p = ParagraphStyle('CellP', parent=styles['Normal'], fontSize=6.5, leading=8, textColor=colors.black)
     
-    story.append(Paragraph("SUBJECT TO DHULE JURISDICTION", ParagraphStyle('SubTop', parent=styles['Normal'], fontSize=6.5, textColor=colors.HexColor('#475569'), alignment=1)))
-    story.append(Paragraph("R.R. LOGISTICS TRANSPORT PVT. LTD.", title_style))
-    story.append(Paragraph("TRANSPORT CONTRACTOR & COMMISSION AGENT", sub_style))
-    story.append(Paragraph("Gat No. 298-2A, R.R. Petroleum, Mumbai-Agra Highway, Sarwad, Dhule.<br/><b>Mob: 9822414040 / 9049521177</b>", addr_style))
+    elements = []
     
-    data = [
-        [
-            Paragraph(f"<b>L.R. No. :</b> {lr_no}", styles['Normal']),
-            Paragraph(f"<b>DI No. :</b> {di_no}<br/><b>Bolt / Seal No. :</b> {bolt_no}", styles['Normal']),
-            Paragraph(f"<b>Date :</b> {date_val}<br/><b>Truck No. :</b> {truck_no}", styles['Normal'])
-        ],
-        [
-            Paragraph(f"<b>From :</b> {from_loc}", styles['Normal']),
-            "",
-            Paragraph(f"<b>To :</b> {to_loc}", styles['Normal'])
-        ],
-        [
-            Paragraph(f"<b>Consignor:</b><br/>{consignor}<br/><br/><b>GSTIN No. :</b> {c_gst}<br/><b>E-way Bill No. :</b> {c_eway}", styles['Normal']),
-            "",
-            Paragraph(f"<b>Consignee:</b><br/>{consignee}<br/><br/><b>Material / Grade:</b> {mat_grade}", styles['Normal'])
-        ],
-        [
-            Paragraph(f"<b>Driver Name :</b> {d_name}", styles['Normal']),
-            Paragraph(f"<b>D.L. No. :</b> {d_dl}", styles['Normal']),
-            Paragraph(f"<b>Weight (MT) :</b> {weight}", styles['Normal'])
-        ],
-        [
-            Paragraph(f"<b>Driver Mobile :</b> {d_mobile}", styles['Normal']),
-            "",
-            Paragraph(f"<b>Freight (भाडे) :</b> {freight}<br/><b>Order By :</b> {order_by}", styles['Normal'])
-        ],
-        [
-            Paragraph("We are only Broker and commission agent. Please check all documents of truck carefully. Subject to DHULE Jurisdiction.", styles['Normal']),
-            "",
-            Paragraph("For R.R. LOGISTICS TRANSPORT PVT. LTD.<br/><br/><br/><b>Authorized Signatory</b>", styles['Normal'])
-        ]
+    # Header block
+    elements.append(Paragraph("<b>SUBJECT TO DHULE JURISDICTION</b>", top_small))
+    elements.append(Paragraph("<b>R.R. LOGISTICS TRANSPORT PVT. LTD.</b>", main_title))
+    elements.append(Paragraph("<b>TRANSPORT CONTRACTOR & COMMISSION AGENT</b>", sub_title))
+    elements.append(Paragraph("Gat No. 298-2A, R.R. Petroleum, Mumbai-Agra Highway, Sarwad, Dhule. | <b>Mob: 9822414040 / 9049521177</b>", addr_style))
+    elements.append(Spacer(1, 2))
+    elements.append(Paragraph(f"<b>--- {copy_title} ---</b>", badge_style))
+    elements.append(Spacer(1, 2))
+    
+    # Table Content
+    row1 = [
+        Paragraph(f"<b>L.R. No. :</b> {lr_no}", cell_p),
+        Paragraph(f"<b>DI No. :</b> {di_no}", cell_p),
+        Paragraph(f"<b>Date :</b> {date_val}", cell_p)
+    ]
+    row2 = [
+        Paragraph(f"<b>Truck No. :</b> {truck_no}", cell_p),
+        Paragraph(f"<b>Order By :</b> {order_by}", cell_p),
+        ""
+    ]
+    row3 = [
+        Paragraph(f"<b>From :</b><br/>{from_loc}", cell_p),
+        "",
+        Paragraph(f"<b>To :</b><br/>{to_loc}", cell_p)
+    ]
+    row4 = [
+        Paragraph(f"<b>Consignor:</b><br/>{consignor}<br/><b>GSTIN No. :</b> {c_gst}<br/><b>E-way Bill No. :</b> {c_eway}", cell_p),
+        "",
+        Paragraph(f"<b>Consignee:</b><br/>{consignee}", cell_p)
+    ]
+    row5 = [
+        Paragraph(f"<b>Driver Name :</b> {d_name if d_name else '-'}", cell_p),
+        Paragraph(f"<b>D.L. No. :</b> {d_dl if d_dl else '-'}", cell_p),
+        Paragraph(f"<b>Material / Grade :</b> {mat_grade}", cell_p)
+    ]
+    row6 = [
+        Paragraph(f"<b>Driver Mobile :</b> {d_mobile if d_mobile else '-'}", cell_p),
+        Paragraph(f"<b>Weight (MT) :</b> {weight}", cell_p),
+        Paragraph(f"<b>Freight (Rs.) :</b> {freight}", cell_p)
+    ]
+    row7 = [
+        Paragraph(f"<b>Remarks:</b> {remarks}", cell_p),
+        "",
+        Paragraph("For <b>R.R. LOGISTICS TRANSPORT PVT. LTD.</b><br/><br/><br/><b>Authorized Signatory</b>", ParagraphStyle('SignP', parent=styles['Normal'], fontSize=6.5, leading=7, alignment=1))
     ]
     
-    t = Table(data, colWidths=[200, 185, 185])
+    table_data = [row1, row2, row3, row4, row5, row6, row7]
+    col_widths = [190, 185, 185]
+    
+    t = Table(table_data, colWidths=col_widths)
     t.setStyle(TableStyle([
-        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#1e3a8a')),
-        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#1e3a8a')),
-        ('SPAN', (0, 1), (1, 1)),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#103A70')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#103A70')),
+        ('SPAN', (1, 1), (2, 1)),
         ('SPAN', (0, 2), (1, 2)),
-        ('SPAN', (0, 4), (1, 4)),
-        ('SPAN', (0, 5), (1, 5)),
-        ('TOPPADDING', (0,0), (-1,-1), 5),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-        ('LEFTPADDING', (0,0), (-1,-1), 6),
-        ('RIGHTPADDING', (0,0), (-1,-1), 6),
+        ('SPAN', (0, 3), (1, 3)),
+        ('SPAN', (0, 6), (1, 6)),
+        ('TOPPADDING', (0,0), (-1,-1), 2.5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 2.5),
+        ('LEFTPADDING', (0,0), (-1,-1), 4),
+        ('RIGHTPADDING', (0,0), (-1,-1), 4),
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
     ]))
     
-    story.append(t)
-    story.append(Spacer(1, 4))
-    story.append(Paragraph("THIS IS COMPUTER GENERATED BILTY", ParagraphStyle('Foot', parent=styles['Normal'], fontSize=6.5, textColor=colors.HexColor('#475569'), alignment=1)))
+    elements.append(t)
+    elements.append(Spacer(1, 2))
+    elements.append(Paragraph("We are only Broker and commission agent. Please check all documents of truck carefully. Subject to DHULE Jurisdiction. | <b>THIS IS COMPUTER GENERATED BILTY</b>", ParagraphStyle('Foot', parent=styles['Normal'], fontSize=5.5, leading=6, textColor=colors.HexColor('#475569'), alignment=1)))
+    
+    return elements
+
+def generate_official_lr(lr_no, di_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade, remarks="Ultratech Cement Plant Wagode"):
+    temp_dir = tempfile.gettempdir()
+    safe_lr = str(lr_no).replace('/', '_')
+    pdf_path = os.path.join(temp_dir, f"LR_{safe_lr}_{truck_no}.pdf")
+    
+    # 1 Page Portrait A4/Letter containing BOTH Consignee Copy & Driver Copy
+    doc = SimpleDocTemplate(pdf_path, pagesize=portrait(letter), rightMargin=18, leftMargin=18, topMargin=12, bottomMargin=12)
+    story = []
+    
+    # 1. CONSIGNEE COPY
+    story.extend(build_single_bilty_content(
+        "CONSIGNEE COPY", lr_no, di_no, truck_no, date_val,
+        from_loc, to_loc, consignor, consignee, c_gst, c_eway,
+        d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade, remarks
+    ))
+    
+    story.append(Spacer(1, 8))
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#94a3b8'), spaceAfter=8, spaceBefore=4, dash=[3, 3]))
+    
+    # 2. DRIVER / TRANSPORTER COPY
+    story.extend(build_single_bilty_content(
+        "DRIVER / TRANSPORTER COPY", lr_no, di_no, truck_no, date_val,
+        from_loc, to_loc, consignor, consignee, c_gst, c_eway,
+        d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade, remarks
+    ))
     
     doc.build(story)
     return pdf_path
@@ -399,7 +438,7 @@ def generate_trip_sheet_excel(d):
         ("A2", "LR.NO", "B2", d['lr_no'], "C2", "DI NO", "D2", d.get('di_no', ''), "E2", "Date", "F2", d['date_val']),
         ("A3", "From", "B3", d['from_loc'], "C3", "To", "D3", d['to_loc'], "E3", "Truck No", "F3", d['truck_no']),
         ("A4", "Rate (per Ton)", "B4", d['rate_ton'], "C4", "Freight", "D4", "=B4*F4", "E4", "Weight (Tons)", "F4", d['weight_ton']),
-        ("A5", "Bolt/Seal No", "B5", d.get('bolt_seal_no', ''), "C5", "Grade", "D5", d.get('material_grade', 'PPC'), "E5", "Party Name", "F5", d['party_name'])
+        ("A5", "Party Name", "B5", d['party_name'], "C5", "Grade", "D5", d.get('material_grade', 'PPC'), "E5", "", "F5", "")
     ]
     
     for row in headers_meta:
@@ -508,7 +547,7 @@ def generate_trip_sheet_pdf(d):
         ["LR.NO", str(d['lr_no']), "DI NO", str(d.get('di_no', '')), "Date", str(d['date_val']), "", ""],
         ["From", str(d['from_loc']), "To", str(d['to_loc']), "Truck No", str(d['truck_no']), "", ""],
         ["Rate (per Ton)", str(d['rate_ton']), "Freight", str(freight_val), "Weight (Tons)", str(d['weight_ton']), "", ""],
-        ["Bolt/Seal No", str(d.get('bolt_seal_no', '')), "Grade", str(d.get('material_grade', 'PPC')), "Party Name", str(d['party_name']), "", ""],
+        ["Party Name", str(d['party_name']), "Grade", str(d.get('material_grade', 'PPC')), "", "", "", ""],
         ["EXP", "Ltr", "Rate", "Amount", "Date", "Pump", "Summary", "Values"],
         ["Trip Adv", "", "", str(d['trip_adv']), str(d['adv_date']), "", "Start Km", str(d['start_km'])],
         ["Unloading", "", "", str(d['unloading']), "", "", "End Km", str(d['end_km'])],
@@ -787,7 +826,7 @@ def main():
                     
                     conn = get_db_connection()
                     c = conn.cursor()
-                    c.execute('''INSERT OR REPLACE INTO drivers VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+                    c.execute('''INSERT OR REPLACE INTO drivers VALUES (?,?,?,?,?,?,?,?,?,?,?)''', 
                               (drv_dl_no, drv_name, drv_mob, drv_aad_no, drv_upi, bank_name, acc_no, ifsc_code, aad_path, lic_path, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                     conn.commit()
                     conn.close()
@@ -798,20 +837,19 @@ def main():
 
         # --- MENU 3: TRIP INFO & AUTO LR GENERATION (WITH ULTRATECH SCANNER) ---
         elif menu == "३. Trip Information & Auto LR Generation":
-            st.subheader("📄 ट्रिप माहिती आणि LR (Bilty) निर्मिती")
+            st.subheader("📄 ट्रिप माहिती आणि ऑटो LR निर्मिती")
 
-            # --- नवीन फिचर: अल्ट्राटेक डॉक्युमेंट अपलोड व ऑटो-स्कॅन ---
             st.markdown("### ⚡ अल्ट्राटेक सिस्टीम LR / इनव्हॉइस अपलोड करा (Auto Scan)")
-            with st.expander("📥 अल्ट्राटेक PDF किंवा फोटो अपलोड करून फॉर्म आपोआप भरा", expanded=True):
+            with st.expander("📥 अल्ट्राटेक PDF किंवा फोटो अपलोड करून 1-क्लिक LR तयार करा", expanded=True):
                 utcl_doc = st.file_uploader("Ultratech Bilty / Invoice ची PDF किंवा इमेज निवडा:", type=["pdf", "png", "jpg", "jpeg"], key="utcl_scanner")
                 if utcl_doc is not None:
-                    if st.button("🔍 डॉक्युमेंट स्कॅन करून फॉर्म भरा"):
+                    if st.button("🔍 डॉक्युमेंट स्कॅन करा व फॉर्म भरा"):
                         with st.spinner("डॉक्युमेंटमधून माहिती काढली जात आहे..."):
                             extracted_txt = extract_text_from_doc(utcl_doc)
                             parsed_vals = parse_ultratech_content(extracted_txt)
                             if parsed_vals:
                                 st.session_state['auto_utcl'] = parsed_vals
-                                st.success("✅ डॉक्युमेंट यशस्वीरीत्या स्कॅन झाले! खालील फॉर्ममध्ये तपशील भरले गेले आहेत.")
+                                st.success("✅ डॉक्युमेंट यशस्वीरीत्या स्कॅन झाले! खालील फॉर्ममध्ये सर्व माहिती आपोआप भरली आहे.")
                             else:
                                 st.error("डॉक्युमेंटमधून माहिती वाचता आली नाही. कृपया स्पष्ट PDF किंवा फोटो अपलोड करा.")
 
@@ -819,7 +857,7 @@ def main():
 
             # गाडी निवडणे
             default_truck = auto_data.get('truck_no', '')
-            truck_list = existing_vehicles if existing_vehicles else ["MH18BZ2240"]
+            truck_list = existing_vehicles if existing_vehicles else ["RJ06GC8456", "MH18BZ2240"]
             if default_truck and default_truck not in truck_list:
                 truck_list = [default_truck] + truck_list
 
@@ -827,7 +865,7 @@ def main():
             
             conn = get_db_connection()
             c = conn.cursor()
-            c.execute("SELECT from_loc, to_loc, rate_ton, weight_ton, party_name, material_grade, di_no, bolt_seal_no FROM trip_sheets WHERE truck_no=? ORDER BY rowid DESC LIMIT 1", (sel_truck,))
+            c.execute("SELECT from_loc, to_loc, rate_ton, weight_ton, party_name, material_grade, di_no FROM trip_sheets WHERE truck_no=? ORDER BY rowid DESC LIMIT 1", (sel_truck,))
             last_trip = c.fetchone()
             conn.close()
             
@@ -840,69 +878,62 @@ def main():
                     d_auto_name = d_info[1]
                     d_auto_mob = d_info[2]
 
-            col_lr1, col_lr2, col_lr3 = st.columns(3)
+            col_lr1, col_lr2 = st.columns(2)
             with col_lr1:
-                lr_no = st.text_input("L.R. No. (एल.आर. नंबर)", value="1602/1603")
+                lr_no = st.text_input("L.R. No. (एल.आर. नंबर)", value="1229")
             with col_lr2:
-                default_di = auto_data.get('di_no', last_trip[6] if (last_trip and len(last_trip) > 6 and last_trip[6]) else "DI-99882")
-                di_no = st.text_input("DI No. (डिस्पॅच सूचना क्र. / DI No.)", value=default_di)
-            with col_lr3:
-                default_bolt = auto_data.get('bolt_no', last_trip[7] if (last_trip and len(last_trip) > 7 and last_trip[7]) else "BT-4455")
-                bolt_no = st.text_input("Bolt / Seal No. (बोल्ट सील क्रमांक)", value=default_bolt)
+                default_di = auto_data.get('di_no', last_trip[6] if (last_trip and len(last_trip) > 6 and last_trip[6]) else "6929315396")
+                di_no = st.text_input("DI No. (डिस्पॅच सूचना क्र.)", value=default_di)
 
             col1, col2, col3 = st.columns(3)
             with col1:
-                from_loc = st.text_input("From (कुठून)", value="ULTRATECH CEMENT LTD, DHULE")
-                consignor = st.text_area("Consignor", value="Ultratech Cement Depo, Sarwad, Dhule")
-                d_name = st.text_input("Driver Name", value=d_auto_name if d_auto_name else "Ramesh Pawar")
+                from_loc = st.text_input("From (कुठून)", value="Ultratech Cement Plant, Wagode / Nardana, Dhule (425406)")
+                consignor = st.text_area("Consignor", value="ULTRATECH CEMENT LIMITED\n(UNIT-DHULE CEMENT WORKS), PLOT NO-3 NARDANA INDUSTRIAL AREA, MIDC PHASE-1, VILLAGE-WAGHDE, DHULE, 425406", height=90)
+                d_name = st.text_input("Driver Name", value=d_auto_name if d_auto_name else "-")
             with col2:
                 truck_no = st.text_input("Truck No.", value=sel_truck)
-                default_to = auto_data.get('to_loc', last_trip[1] if last_trip else "MALEGAON")
+                default_to = auto_data.get('to_loc', last_trip[1] if last_trip else "AHMEDNAGAR / SANGAMNER (6309-0905)")
                 to_loc = st.text_input("To (कुठे)", value=default_to)
-                consignee = st.text_area("Consignee", value="Ultratech Authorised Dealer / Party Warehouse")
-                d_dl = st.text_input("D.L. No.", value=d_auto_dl if d_auto_dl else "MH1820120004567")
+                consignee = st.text_area("Consignee", value="ULTRATECH CEMENT LTD\nULTRATECH CEMENT LTD, SHETE GODOWN, RAITEWADI FATA, PUNE N HIGHWAY, SANGAMNER KHURD, SANGAMNER - 422605", height=90)
+                d_dl = st.text_input("D.L. No.", value=d_auto_dl if d_auto_dl else "-")
             with col3:
-                default_dt = auto_data.get('date_val', datetime.now().strftime("%d-%m-%Y"))
+                default_dt = auto_data.get('date_val', datetime.now().strftime("%d.%m.%Y"))
                 date_val = st.text_input("Date", value=default_dt)
-                default_gst = auto_data.get('c_gst', "27AABCU1234F1Z5")
+                default_gst = auto_data.get('c_gst', "-")
                 c_gst = st.text_input("Consignor GSTIN", value=default_gst)
-                default_ewb = auto_data.get('c_eway', "EW-889923410")
+                default_ewb = auto_data.get('c_eway', "-")
                 c_eway = st.text_input("E-way Bill No.", value=default_ewb)
-                d_mobile = st.text_input("Driver Mobile No.", value=d_auto_mob if d_auto_mob else "9823000000")
+                d_mobile = st.text_input("Driver Mobile No.", value=d_auto_mob if d_auto_mob else "-")
             
             st.markdown("---")
             col_ex1, col_ex2, col_ex3, col_ex4 = st.columns(4)
             with col_ex1:
-                default_wt = auto_data.get('weight', str(last_trip[3]) if last_trip else (v_data[3] if v_data and v_data[3] else "42.0"))
-                weight = st.text_input("Weight (वजन टनांमध्ये)", value=default_wt)
+                default_wt = auto_data.get('weight', "As per slip")
+                weight = st.text_input("Weight (वजन)", value=default_wt)
             with col_ex2:
-                grade_list = ["PPC", "Super", "OPC 43", "OPC 53", "PSC", "Composite", "Loose / Bulk"]
-                detected_grade = auto_data.get('mat_grade', last_trip[5] if (last_trip and len(last_trip) > 5) else "PPC")
-                default_grade_idx = 0
-                for idx, g in enumerate(grade_list):
-                    if g.upper() == detected_grade.upper():
-                        default_grade_idx = idx
-                        break
-                mat_grade = st.selectbox("मटेरियल / ग्रेड निवडा (Material Grade):", grade_list, index=default_grade_idx)
+                detected_grade = auto_data.get('mat_grade', "PPC/ULTRATECH CEMENT")
+                mat_grade = st.text_input("मटेरियल / ग्रेड (Material Grade)", value=detected_grade)
             with col_ex3:
-                rate_val = last_trip[2] if last_trip else 539.0
-                try:
-                    calc_f = float(weight) * float(rate_val)
-                except:
-                    calc_f = 0.0
-                freight = st.text_input("एकूण भाडे (Freight ₹)", value=str(round(calc_f, 2)))
+                freight = st.text_input("Freight (भाडे रक्कम)", value="As per agreement")
             with col_ex4:
-                order_by = st.text_input("Order By", value=last_trip[4] if last_trip else "ULTRATECH")
+                order_by = st.text_input("Order By", value="ULTRATECH CEMENT LTD")
 
-            if st.button("🚀 LR PDF तयार करा"):
+            remarks_val = st.text_input("Remarks", value="Ultratech Cement Plant Wagode")
+
+            st.markdown("### 🖨️ अधिकृत LR PDF जनरेट करा")
+            if st.button("🚀 अधिकृत LR PDF तयार करा (Twin Bilty Layout)"):
                 if lr_no:
-                    pdf_file_path = generate_official_lr(lr_no, di_no, bolt_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade)
-                    st.success("अधिकृत LR PDF तयार झाली आहे! 👇")
+                    pdf_file_path = generate_official_lr(
+                        lr_no, di_no, truck_no, date_val, from_loc, to_loc,
+                        consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile,
+                        weight, freight, order_by, mat_grade, remarks_val
+                    )
+                    st.success("✅ अधिकृत LR PDF तयार झाली आहे! खालील बटण दाबून डाऊनलोड करा:")
                     with open(pdf_file_path, "rb") as f:
                         st.download_button(
-                            label="📥 डाऊनलोड ऑफिशियल LR PDF",
+                            label=f"📥 डाऊनलोड LR PDF ({lr_no}_{truck_no})",
                             data=f,
-                            file_name=f"LR_{lr_no.replace('/', '_')}_Official.pdf",
+                            file_name=f"LR_{lr_no.replace('/', '_')}_{truck_no}.pdf",
                             mime="application/pdf"
                         )
                 else:
@@ -917,17 +948,15 @@ def main():
             
             conn = get_db_connection()
             c = conn.cursor()
-            c.execute("SELECT from_loc, to_loc, rate_ton, weight_ton, party_name, end_km, material_grade, di_no, bolt_seal_no FROM trip_sheets WHERE truck_no=? ORDER BY rowid DESC LIMIT 1", (truck_choice,))
+            c.execute("SELECT from_loc, to_loc, rate_ton, weight_ton, party_name, end_km, material_grade, di_no FROM trip_sheets WHERE truck_no=? ORDER BY rowid DESC LIMIT 1", (truck_choice,))
             last_ts = c.fetchone()
             conn.close()
 
-            col_ts_top1, col_ts_top2, col_ts_top3 = st.columns(3)
+            col_ts_top1, col_ts_top2 = st.columns(2)
             with col_ts_top1:
                 ts_lr = st.text_input("LR.NO", value="1602/1603")
             with col_ts_top2:
                 ts_di = st.text_input("DI No.", value=last_ts[7] if (last_ts and len(last_ts) > 7 and last_ts[7]) else "DI-99882")
-            with col_ts_top3:
-                ts_bolt = st.text_input("Bolt / Seal No.", value=last_ts[8] if (last_ts and len(last_ts) > 8 and last_ts[8]) else "BT-4455")
 
             t1, t2, t3, t4 = st.columns(4)
             with t1:
@@ -1004,7 +1033,7 @@ def main():
             s4.metric("सरासरी (Average)", f"{avg_km} Km/L")
 
             ts_dict = {
-                'lr_no': ts_lr, 'di_no': ts_di, 'bolt_seal_no': ts_bolt,
+                'lr_no': ts_lr, 'di_no': ts_di,
                 'loading_date': ts_ldate, 'date_val': ts_date,
                 'from_loc': ts_from, 'to_loc': ts_to, 'truck_no': ts_truck,
                 'rate_ton': ts_rate, 'weight_ton': ts_weight,
@@ -1024,12 +1053,12 @@ def main():
                 c = conn.cursor()
                 c.execute('''INSERT OR REPLACE INTO trip_sheets (
                                 lr_no, loading_date, date_val, from_loc, to_loc, truck_no, driver_dl, driver_name, driver_mob,
-                                rate_ton, weight_ton, freight, bill_no, otp, party_name, material_grade, di_no, bolt_seal_no,
+                                rate_ton, weight_ton, freight, bill_no, otp, party_name, material_grade, di_no,
                                 start_km, end_km, running_km, trip_adv, unloading, food, tyre_bill, fastag1, fastag2,
                                 diesel_ltr, diesel_amt, commission, maintenance, other_exp, total_exp, trip_balance, created_at
-                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', 
                           (ts_lr, ts_ldate, ts_date, ts_from, ts_to, ts_truck, "", "", "", ts_rate, ts_weight, calc_freight,
-                           ts_bill, "", ts_party, ts_grade, ts_di, ts_bolt, ts_start_km, ts_end_km, calc_run_km, exp_adv, exp_unloading,
+                           ts_bill, "", ts_party, ts_grade, ts_di, ts_start_km, ts_end_km, calc_run_km, exp_adv, exp_unloading,
                            exp_food, exp_tyre, exp_ft1, exp_ft2, tot_diesel_ltr, (d1_amt+d2_amt), exp_comm, exp_maint,
                            exp_other, tot_exp, trip_bal, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                 conn.commit()
@@ -1111,7 +1140,7 @@ def main():
 
             with tab2:
                 st.markdown("#### 📑 सेव्ह केलेल्या सर्व ट्रिप शीट्स")
-                t_df = pd.read_sql_query("SELECT lr_no, di_no, bolt_seal_no, date_val, truck_no, from_loc, to_loc, material_grade, freight, total_exp, trip_balance, created_at FROM trip_sheets", conn)
+                t_df = pd.read_sql_query("SELECT lr_no, di_no, date_val, truck_no, from_loc, to_loc, material_grade, freight, total_exp, trip_balance, created_at FROM trip_sheets", conn)
                 if not t_df.empty:
                     st.dataframe(t_df, use_container_width=True)
                 else:
