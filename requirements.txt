@@ -5,3 +5,4 @@ openpyxl
 pdfplumber
 pypdf
 Pillow
+pytesseract
