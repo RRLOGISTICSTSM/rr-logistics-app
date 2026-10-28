@@ -21,7 +21,7 @@ try:
 except ImportError:
     HAS_PYTESSERACT = False
 
-from reportlab.lib.pagesizes import letter, portrait, landscape
+from reportlab.lib.pagesizes import A4, portrait, landscape
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, HRFlowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
@@ -88,7 +88,7 @@ def init_db():
                     created_at TEXT
                 )''')
 
-    # Trip Sheets Table (Bolt/Seal No. deleted)
+    # Trip Sheets Table
     c.execute('''CREATE TABLE IF NOT EXISTS trip_sheets (
                     lr_no TEXT PRIMARY KEY,
                     loading_date TEXT,
@@ -288,18 +288,18 @@ def parse_ultratech_content(text):
     return data
 
 # ==========================================
-# 1. LR PDF GENERATION (CONSIGNEE & DRIVER COPY - WITHOUT BOLT/SEAL NO)
+# 1. LR PDF GENERATION (2 COPIES ON 1 A4 PAGE PERFECT FIT)
 # ==========================================
 def build_single_bilty_content(copy_title, lr_no, di_no, truck_no, date_val, from_loc, to_loc, consignor, consignee, c_gst, c_eway, d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade, remarks):
     styles = getSampleStyleSheet()
     
-    top_small = ParagraphStyle('TopSub', parent=styles['Normal'], fontSize=6, leading=7, textColor=colors.HexColor('#334155'), alignment=1)
-    main_title = ParagraphStyle('MTitle', parent=styles['Heading1'], fontSize=11, leading=12, textColor=colors.HexColor('#103A70'), alignment=1, spaceAfter=1)
-    sub_title = ParagraphStyle('SubTitle', parent=styles['Normal'], fontSize=6.5, leading=8, textColor=colors.HexColor('#103A70'), alignment=1)
-    addr_style = ParagraphStyle('AddrStyle', parent=styles['Normal'], fontSize=6, leading=7, textColor=colors.HexColor('#334155'), alignment=1)
-    badge_style = ParagraphStyle('BadgeStyle', parent=styles['Normal'], fontSize=7.5, leading=9, textColor=colors.HexColor('#991B1B'), alignment=1)
+    top_small = ParagraphStyle('TopSub', parent=styles['Normal'], fontSize=5.5, leading=6.5, textColor=colors.HexColor('#334155'), alignment=1)
+    main_title = ParagraphStyle('MTitle', parent=styles['Heading1'], fontSize=10, leading=11, textColor=colors.HexColor('#103A70'), alignment=1, spaceAfter=1)
+    sub_title = ParagraphStyle('SubTitle', parent=styles['Normal'], fontSize=6, leading=7, textColor=colors.HexColor('#103A70'), alignment=1)
+    addr_style = ParagraphStyle('AddrStyle', parent=styles['Normal'], fontSize=5.5, leading=6.5, textColor=colors.HexColor('#334155'), alignment=1)
+    badge_style = ParagraphStyle('BadgeStyle', parent=styles['Normal'], fontSize=7, leading=8, textColor=colors.HexColor('#991B1B'), alignment=1)
     
-    cell_p = ParagraphStyle('CellP', parent=styles['Normal'], fontSize=6.5, leading=8, textColor=colors.black)
+    cell_p = ParagraphStyle('CellP', parent=styles['Normal'], fontSize=6, leading=7, textColor=colors.black)
     
     elements = []
     
@@ -308,9 +308,9 @@ def build_single_bilty_content(copy_title, lr_no, di_no, truck_no, date_val, fro
     elements.append(Paragraph("<b>R.R. LOGISTICS TRANSPORT PVT. LTD.</b>", main_title))
     elements.append(Paragraph("<b>TRANSPORT CONTRACTOR & COMMISSION AGENT</b>", sub_title))
     elements.append(Paragraph("Gat No. 298-2A, R.R. Petroleum, Mumbai-Agra Highway, Sarwad, Dhule. | <b>Mob: 9822414040 / 9049521177</b>", addr_style))
-    elements.append(Spacer(1, 2))
+    elements.append(Spacer(1, 1))
     elements.append(Paragraph(f"<b>--- {copy_title} ---</b>", badge_style))
-    elements.append(Spacer(1, 2))
+    elements.append(Spacer(1, 1))
     
     # Table Content
     row1 = [
@@ -346,30 +346,31 @@ def build_single_bilty_content(copy_title, lr_no, di_no, truck_no, date_val, fro
     row7 = [
         Paragraph(f"<b>Remarks:</b> {remarks}", cell_p),
         "",
-        Paragraph("For <b>R.R. LOGISTICS TRANSPORT PVT. LTD.</b><br/><br/><br/><b>Authorized Signatory</b>", ParagraphStyle('SignP', parent=styles['Normal'], fontSize=6.5, leading=7, alignment=1))
+        Paragraph("For <b>R.R. LOGISTICS TRANSPORT PVT. LTD.</b><br/><br/><br/><b>Authorized Signatory</b>", ParagraphStyle('SignP', parent=styles['Normal'], fontSize=5.5, leading=6.5, alignment=1))
     ]
     
     table_data = [row1, row2, row3, row4, row5, row6, row7]
+    # Total width = 560 pt (A4 width 595.27 - left/right margin 16*2 = 563 pt)
     col_widths = [190, 185, 185]
     
     t = Table(table_data, colWidths=col_widths)
     t.setStyle(TableStyle([
-        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#103A70')),
-        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#103A70')),
+        ('BOX', (0,0), (-1,-1), 0.8, colors.HexColor('#103A70')),
+        ('INNERGRID', (0,0), (-1,-1), 0.4, colors.HexColor('#103A70')),
         ('SPAN', (1, 1), (2, 1)),
         ('SPAN', (0, 2), (1, 2)),
         ('SPAN', (0, 3), (1, 3)),
         ('SPAN', (0, 6), (1, 6)),
-        ('TOPPADDING', (0,0), (-1,-1), 2.5),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 2.5),
-        ('LEFTPADDING', (0,0), (-1,-1), 4),
-        ('RIGHTPADDING', (0,0), (-1,-1), 4),
+        ('TOPPADDING', (0,0), (-1,-1), 1.5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 1.5),
+        ('LEFTPADDING', (0,0), (-1,-1), 3),
+        ('RIGHTPADDING', (0,0), (-1,-1), 3),
         ('VALIGN', (0,0), (-1,-1), 'TOP'),
     ]))
     
     elements.append(t)
-    elements.append(Spacer(1, 2))
-    elements.append(Paragraph("We are only Broker and commission agent. Please check all documents of truck carefully. Subject to DHULE Jurisdiction. | <b>THIS IS COMPUTER GENERATED BILTY</b>", ParagraphStyle('Foot', parent=styles['Normal'], fontSize=5.5, leading=6, textColor=colors.HexColor('#475569'), alignment=1)))
+    elements.append(Spacer(1, 1))
+    elements.append(Paragraph("We are only Broker and commission agent. Please check all documents of truck carefully. Subject to DHULE Jurisdiction. | <b>THIS IS COMPUTER GENERATED BILTY</b>", ParagraphStyle('Foot', parent=styles['Normal'], fontSize=5, leading=5.5, textColor=colors.HexColor('#475569'), alignment=1)))
     
     return elements
 
@@ -378,21 +379,28 @@ def generate_official_lr(lr_no, di_no, truck_no, date_val, from_loc, to_loc, con
     safe_lr = str(lr_no).replace('/', '_')
     pdf_path = os.path.join(temp_dir, f"LR_{safe_lr}_{truck_no}.pdf")
     
-    # 1 Page Portrait A4/Letter containing BOTH Consignee Copy & Driver Copy
-    doc = SimpleDocTemplate(pdf_path, pagesize=portrait(letter), rightMargin=18, leftMargin=18, topMargin=12, bottomMargin=12)
+    # Standard A4 Portrait size with compact margins so 2 copies fit on 1 single page
+    doc = SimpleDocTemplate(
+        pdf_path,
+        pagesize=portrait(A4),
+        rightMargin=16,
+        leftMargin=16,
+        topMargin=10,
+        bottomMargin=10
+    )
     story = []
     
-    # 1. CONSIGNEE COPY
+    # 1. CONSIGNEE COPY (Top Half)
     story.extend(build_single_bilty_content(
         "CONSIGNEE COPY", lr_no, di_no, truck_no, date_val,
         from_loc, to_loc, consignor, consignee, c_gst, c_eway,
         d_name, d_dl, d_mobile, weight, freight, order_by, mat_grade, remarks
     ))
     
-    story.append(Spacer(1, 8))
-    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#94a3b8'), spaceAfter=8, spaceBefore=4, dash=[3, 3]))
+    story.append(Spacer(1, 4))
+    story.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor('#64748b'), spaceAfter=4, spaceBefore=2, dash=[4, 3]))
     
-    # 2. DRIVER / TRANSPORTER COPY
+    # 2. DRIVER / TRANSPORTER COPY (Bottom Half)
     story.extend(build_single_bilty_content(
         "DRIVER / TRANSPORTER COPY", lr_no, di_no, truck_no, date_val,
         from_loc, to_loc, consignor, consignee, c_gst, c_eway,
@@ -530,7 +538,7 @@ def generate_trip_sheet_pdf(d):
     temp_dir = tempfile.gettempdir()
     safe_lr = str(d['lr_no']).replace('/', '_')
     pdf_path = os.path.join(temp_dir, f"TripSheet_{safe_lr}.pdf")
-    doc = SimpleDocTemplate(pdf_path, pagesize=landscape(letter), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
+    doc = SimpleDocTemplate(pdf_path, pagesize=landscape(A4), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
     story = []
     
     freight_val = round(d['rate_ton'] * d['weight_ton'], 2)
@@ -600,7 +608,7 @@ def generate_trip_sheet_pdf(d):
 def generate_doc_expiry_pdf(vehicle_rows):
     temp_dir = tempfile.gettempdir()
     pdf_path = os.path.join(temp_dir, f"Vehicle_Doc_Expiry_{datetime.now().strftime('%Y%m%d')}.pdf")
-    doc = SimpleDocTemplate(pdf_path, pagesize=landscape(letter), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
+    doc = SimpleDocTemplate(pdf_path, pagesize=landscape(A4), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=20)
     story = []
     styles = getSampleStyleSheet()
     
@@ -888,13 +896,13 @@ def main():
             col1, col2, col3 = st.columns(3)
             with col1:
                 from_loc = st.text_input("From (कुठून)", value="Ultratech Cement Plant, Wagode / Nardana, Dhule (425406)")
-                consignor = st.text_area("Consignor", value="ULTRATECH CEMENT LIMITED\n(UNIT-DHULE CEMENT WORKS), PLOT NO-3 NARDANA INDUSTRIAL AREA, MIDC PHASE-1, VILLAGE-WAGHDE, DHULE, 425406", height=90)
+                consignor = st.text_area("Consignor", value="ULTRATECH CEMENT LIMITED\n(UNIT-DHULE CEMENT WORKS), PLOT NO-3 NARDANA INDUSTRIAL AREA, MIDC PHASE-1, VILLAGE-WAGHDE, DHULE, 425406", height=80)
                 d_name = st.text_input("Driver Name", value=d_auto_name if d_auto_name else "-")
             with col2:
                 truck_no = st.text_input("Truck No.", value=sel_truck)
                 default_to = auto_data.get('to_loc', last_trip[1] if last_trip else "AHMEDNAGAR / SANGAMNER (6309-0905)")
                 to_loc = st.text_input("To (कुठे)", value=default_to)
-                consignee = st.text_area("Consignee", value="ULTRATECH CEMENT LTD\nULTRATECH CEMENT LTD, SHETE GODOWN, RAITEWADI FATA, PUNE N HIGHWAY, SANGAMNER KHURD, SANGAMNER - 422605", height=90)
+                consignee = st.text_area("Consignee", value="ULTRATECH CEMENT LTD\nULTRATECH CEMENT LTD, SHETE GODOWN, RAITEWADI FATA, PUNE N HIGHWAY, SANGAMNER KHURD, SANGAMNER - 422605", height=80)
                 d_dl = st.text_input("D.L. No.", value=d_auto_dl if d_auto_dl else "-")
             with col3:
                 default_dt = auto_data.get('date_val', datetime.now().strftime("%d.%m.%Y"))
